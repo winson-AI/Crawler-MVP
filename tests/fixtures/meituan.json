@@ -1,0 +1,59 @@
+{
+  "jobUnionId": "4720236768",
+  "name": "骑行硬件-电气部件测试工程师",
+  "projectId": null,
+  "projectName": null,
+  "jobType": "3",
+  "jobSpecialCode": "5",
+  "jobSource": "1",
+  "jobStatus": "000",
+  "jobFamily": "技术类",
+  "jobFamilyGroup": "测试",
+  "cityList": [
+    {
+      "code": null,
+      "name": "北京市",
+      "children": null,
+      "sort": null,
+      "subCode": null,
+      "mapping": null,
+      "outerCode": null,
+      "bgNode": false
+    },
+    {
+      "code": null,
+      "name": "深圳市",
+      "children": null,
+      "sort": null,
+      "subCode": null,
+      "mapping": null,
+      "outerCode": null,
+      "bgNode": false
+    }
+  ],
+  "workYear": null,
+  "department": [
+    {
+      "code": null,
+      "name": "软硬件服务-硬件管理部",
+      "children": null,
+      "sort": null,
+      "subCode": null,
+      "mapping": null,
+      "outerCode": null,
+      "bgNode": false
+    }
+  ],
+  "desc": "",
+  "departmentIntro": null,
+  "jobDuty": "1、负责美团单车/助力车硬件产品的硬件和嵌入式软件测试，覆盖主控、智能锁、IoT通信模组等电气部件，保证电气产品质量；\n2、快速熟悉产品，完成功能/自动化测试用例编写和执行，统筹版本测试的需求分析、用例设计、评审组织、测试执行及缺陷闭环验证；\n3、负责产线运维检测工具（上位机）版本测试，覆盖新产品整车检测适配、主控升级模块验证、市场问题优化回归等场景；\n4、对测试中发现的问题进行详细分析和准确定位，同步提供测试环境、完整复现步骤、关键日志和初步分析判断，与开发人员讨论缺陷解决方案；\n5、对测试结果进行总结与统计分析，跟踪测试进度，提出反馈意见；\n6、针对用户反馈和市场问题进行有效分析、定位问题，协助开发人员定位和解决问题；\n7、定期前往业务一线查看业务运营和维修问题，从维修人员实际使用视角设计测试场景，模拟多样化硬件组合与异常链路，把相关问题汇总落实在产品测试中，实现质量保障；\n8、参与内部自动化测试平台的维护与需求开发，推动测试自动化能力建设，沉淀测试文档与组织过程资产（用例库、测试规范、新人指南）。",
+  "jobRequirement": "1、计算机软件、电子信息、自动化、通信等相关专业本科（含）以上学历；\n\n2、3年以上嵌入式软件产品测试工作经验，了解主流MCU平台（如STM32、Nordic nRF系列），了解2G/3G/4G、BLE、eMTC、NB-IoT、Wi-Fi、GNSS等通信原理；\n\n3、熟悉测试流程和测试用例设计方法，具备版本测试主R经验者优先；\n\n4、了解生产流程及上位机软件测试方法；\n\n5、熟练使用测试工具及管理平台（Jira、ONES、Testlink、Wiki等），能使用示波器、逻辑分析仪、CAN分析仪等工具进行问题定位；\n\n6、对PCBA有一定了解，能查看原理图；\n\n7、具备焊接和硬件debug能力；\n\n8、学习能力强，能承受一定工作压力，富有团队精神、有责任心，具备良好的沟通协调能力。",
+  "precedence": null,
+  "highLight": "1、美团骑行是行业优秀的共享单车平台，拥有广阔的发展空间和良好的职业发展机会；\n\n2、团队气氛融洽，有完整的人员培训体系（新人指南、导师制、成熟培养路径）；\n\n3、能够和各职能团队的技术大牛一起工作，共建项目；\n\n4、硬件+嵌入式+IoT全栈测试场景，覆盖单车/电单车多产品线、百万级线下车辆，测试价值直接作用于用户体验；\n\n5、团队重测试效能建设——自研内部自动化测试平台+百台级树莓派执行器集群+AI工具深度应用，资深工程师可主导质量体系与效能工程建设。",
+  "otherInfo": null,
+  "firstPostTime": null,
+  "refreshTime": 1791629101000,
+  "tag": null,
+  "expiredTime": null,
+  "socialRecommendJob": null
+}

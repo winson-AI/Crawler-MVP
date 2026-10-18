@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>职位雷达 · 招聘筛选</title>
+<style>
+:root{--bg:#f4f6f9;--ink:#172b3a;--muted:#667b8b;--line:#dfe7ed;--accent:#087b72}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 system-ui,-apple-system,sans-serif}button,input,select{font:inherit}button,a,input,select{outline-offset:3px}header{background:#153b42;color:white;padding:28px max(24px,calc((100vw - 1320px)/2));display:flex;align-items:center;justify-content:space-between;gap:20px}h1{font-size:25px;margin:0}header p{color:#bed8d8;margin:5px 0 0;font-size:13px}.eyebrow{font:11px monospace;letter-spacing:3px;color:#8bcbc3;margin-bottom:7px}.source{color:#d3ece9;font-size:13px}main{max-width:1368px;margin:auto;padding:28px 24px;display:grid;grid-template-columns:292px 1fr;gap:26px}.panel,.job,.status{background:white;border:1px solid var(--line);border-radius:12px}.panel{padding:22px;align-self:start;position:sticky;top:20px}h2{font-size:17px;margin:0 0 20px}label{display:block;font-weight:600;font-size:13px;margin:18px 0 7px}input[type=text],input[type=number],select{width:100%;border:1px solid #c8d6de;background:white;border-radius:7px;padding:9px 11px;color:var(--ink)}input:focus,select:focus{border-color:var(--accent);outline:2px solid #d4eeea}small,.hint{color:var(--muted);font-size:12px}.mode{display:flex;align-items:center;justify-content:space-between;gap:12px}.mode select{width:100px;font-size:12px;padding:3px 6px}.check{display:flex;gap:8px;align-items:center;font-weight:400;margin-top:9px}.check input{accent-color:var(--accent)}button,.export{border:0;cursor:pointer;border-radius:7px;padding:9px 14px;background:var(--accent);color:white;font-weight:600;font-size:13px;text-decoration:none;display:inline-block}button:disabled{opacity:.55;cursor:wait}.secondary,.export{background:#eef4f4;color:var(--accent)}.actions{display:flex;gap:8px;margin-top:22px}.actions button:first-child{flex:1}.status{padding:18px 22px;margin-bottom:23px;display:flex;justify-content:space-between;align-items:center;gap:20px}.status strong{font-size:14px}.status p{margin:5px 0 0;font-size:12px;color:var(--muted)}.live-dot{display:inline-block;width:7px;height:7px;background:#0b9685;border-radius:50%;margin-right:8px}.result-head{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:15px}.result-head h2{margin:0;font-size:20px}.exports{display:flex;gap:8px}.job{margin-bottom:13px;padding:22px 24px}.job-head{display:flex;justify-content:space-between;gap:16px}.job h3{font-size:17px;margin:0 0 7px}.job h3 a{color:var(--ink);text-decoration:none}.job h3 a:hover{color:var(--accent)}.meta{font-size:12px;color:var(--muted)}.date{font:12px monospace;color:var(--muted);white-space:nowrap}.chips{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0}.chip{background:#f1f5f8;color:#496271;padding:3px 8px;font-size:11px;border-radius:5px}.chip.match{background:#e1f3ed;color:#146c55}.experience{font-size:12px;margin-top:12px;color:#45646c}.snippet{font-size:13px;color:#647785;margin:8px 0;white-space:pre-line}details{margin-top:12px;border-top:1px solid #edf1f4;padding-top:11px}summary{cursor:pointer;color:var(--accent);font-size:12px;font-weight:600}pre{font:13px/1.85 system-ui,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0}.empty{border:1px dashed #c5d4dd;border-radius:12px;text-align:center;color:var(--muted);padding:64px 20px;background:#ffffff80}.error{display:none;background:#fff0ee;color:#9e3529;padding:12px 16px;margin:0 0 18px;border-radius:8px;font-size:13px}.more{text-align:center;margin:24px 0}.footer{font-size:11px;color:#82949f;text-align:center;margin-top:26px}.loading{color:var(--muted);padding:30px} @media(max-width:800px){header{padding:22px;align-items:start}.source{display:none}main{grid-template-columns:1fr;padding:18px}.panel{position:static}.status{align-items:start}.job-head{display:block}.date{display:block;margin-top:7px}.result-head{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<header><div><div class="eyebrow">JOB RADAR / 01</div><h1>职位雷达</h1><p>让下一份工作，更接近你的方向。</p></div><a id="source-link" class="source" href="https://talent.baidu.com/jobs/social-list" target="_blank" rel="noopener">数据来源：百度社会招聘 ↗</a></header>
+<main>
+<form class="panel" id="filters">
+<h2>设置你的 Selector</h2>
+<label for="source">招聘数据源</label><select id="source" disabled><option value="baidu">百度社会招聘</option></select>
+<label for="locations">工作地点</label><input id="locations" type="text" placeholder="北京，上海，深圳"><small>多个地点任选其一；支持省略“市”</small>
+<label for="years">我的工作年限</label><input id="years" type="number" min="0" max="80" step="0.5" placeholder="例如：3"><small>匹配职位要求的年限范围；留空不限</small>
+<label class="check"><input id="unknown" type="checkbox">保留未明确年限的职位</label>
+<label class="mode" for="tech">技术栈<select id="tech-mode" aria-label="技术栈匹配方式"><option value="all">全部命中</option><option value="any">任一命中</option></select></label><input id="tech" type="text" placeholder="Python，Java，Go"><small>不区分大小写；多个词用逗号分隔</small>
+<label class="mode" for="keywords">关键词<select id="keyword-mode" aria-label="关键词匹配方式"><option value="all">全部命中</option><option value="any">任一命中</option></select></label><input id="keywords" type="text" placeholder="大模型，后端，研发"><small>匹配标题、任职要求和工作职责</small>
+<label for="exclude">排除关键词</label><input id="exclude" type="text" placeholder="实习，销售">
+<div class="actions"><button type="submit">筛选职位</button><button type="button" class="secondary" id="reset">重置</button></div>
+<p class="hint">不同条件同时生效。年限依据原始文本提取，可在结果中核对。</p>
+</form>
+<section>
+<div class="status"><div><strong><span class="live-dot"></span><span id="status-title">正在读取缓存…</span></strong><p id="status-detail">首次使用请抓取职位数据。</p></div><button id="crawl" type="button">刷新全量职位</button></div>
+<div class="error" id="error" role="alert"></div>
+<label class="mode" for="ranker">结果排序<select id="ranker" style="width:180px"><option value="published_desc">发布时间：新 → 旧</option><option value="published_asc">发布时间：旧 → 新</option><option value="experience_asc">工作年限：低 → 高</option><option value="experience_desc">工作年限：高 → 低</option></select></label>
+<div class="result-head"><h2>匹配职位 <span id="count">0</span> <small>条</small></h2><div class="exports"><a class="export" id="json-export">JSON ↓</a><a class="export" id="csv-export">CSV ↓</a></div></div>
+<div id="results" aria-live="polite"><div class="loading">加载中…</div></div><div class="more"><button id="more" class="secondary" hidden>显示更多</button></div>
+<div class="footer">公开职位 · 本地筛选 · 原始招聘页面可直接访问</div>
+</section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let jobs = [], visible = 30, active = {}, wasRunning = false, searchVersion = 0, sources = [];
+const terms = id => $(id).value.split(/[,，、\n]/).map(x=>x.trim()).filter(Boolean);
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function selector(){return {locations:terms('locations'),years:$('years').value===''?null:Number($('years').value),include_unknown_experience:$('unknown').checked,technologies:terms('tech'),technology_mode:$('tech-mode').value,keywords:terms('keywords'),keyword_mode:$('keyword-mode').value,exclude_keywords:terms('exclude')};}
+function error(message){$('error').textContent=message;$('error').style.display=message?'block':'none';}
+async function request(url,options){const response=await fetch(url,options);const data=await response.json();if(!response.ok)throw new Error(data.error||'请求失败');return data;}
+function render(){
+ $('count').textContent=jobs.length;
+ $('more').hidden=visible>=jobs.length;
+ if(!jobs.length){$('results').innerHTML='<div class="empty">没有匹配的职位。<br><small>尝试调整筛选条件，或先刷新职位数据。</small></div>';return;}
+ $('results').innerHTML=jobs.slice(0,visible).map(job=>{
+  const e=job.experience;
+  const experience=e.min===null?'年限未明确':e.max===null?(e.min===0?'经验不限':`${e.min} 年及以上`):`${e.min}–${e.max} 年`;
+  const chips=[...job.technologies.map(t=>`<span class="chip">${esc(t)}</span>`),...job.matches.technologies.map(t=>`<span class="chip match">技术：${esc(t)}</span>`),...job.matches.keywords.map(t=>`<span class="chip match">关键词：${esc(t)}</span>`)].join('');
+  return `<article class="job"><div class="job-head"><div><h3><a href="${esc(job.url)}" target="_blank" rel="noopener">${esc(job.title)} ↗</a></h3><div class="meta">${esc(job.company)} · ${esc(job.locations.join(' / '))} · ${esc(job.department)} · ${esc(job.category)}</div></div><span class="date">发布：${esc(job.published_at||'未知')}</span></div><div class="experience">${esc(experience)}${e.evidence?' · 依据：'+esc(e.evidence):''}</div><div class="chips">${chips}</div><p class="snippet">${esc(job.description.slice(0,180))}${job.description.length>180?'…':''}</p><details><summary>查看任职要求与工作职责</summary><strong class="meta">任职要求</strong><pre>${esc(job.requirements)}</pre><strong class="meta">工作职责</strong><pre>${esc(job.description)}</pre></details></article>`;
+ }).join('');
+}
+async function search(){
+ const version=++searchVersion;
+ const next=selector();
+ try{error('');const query=new URLSearchParams({selector:JSON.stringify(next),source:$('source').value,ranker:$('ranker').value});const data=await request('/api/jobs?'+query);if(version!==searchVersion)return;active=next;jobs=data.jobs;visible=30;render();for(const fmt of ['json','csv'])$(fmt+'-export').href='/api/export?'+query+'&format='+fmt;localStorage.setItem('job-selector',JSON.stringify(active));localStorage.setItem('job-source',$('source').value);localStorage.setItem('job-ranker',$('ranker').value);}catch(e){error(e.message);}
+}
+function restore(s){$('locations').value=(s.locations||[]).join('，');$('years').value=s.years??'';$('unknown').checked=!!s.include_unknown_experience;$('tech').value=(s.technologies||[]).join('，');$('tech-mode').value=s.technology_mode||'all';$('keywords').value=(s.keywords||[]).join('，');$('keyword-mode').value=s.keyword_mode||'all';$('exclude').value=(s.exclude_keywords||[]).join('，');}
+async function status(){
+ const source=$('source').value;
+ try{const data=await request('/api/status?'+new URLSearchParams({source}));if(source!==$('source').value)return;const s=data.snapshot;$('crawl').disabled=data.running;
+  if(data.running){const p=data.progress;$('status-title').textContent=p?`正在抓取 ${data.source_name}：${p.collected} / ${p.reported_total} 条`:`正在连接 ${data.source_name}…`;$('status-detail').textContent=p?`第 ${p.page} 页 · 完成后自动更新结果`:'抓取期间可继续筛选已有缓存';}
+  else{$('status-title').textContent=s.fetched_at?`已缓存 ${s.collected} 条${s.complete?' · 全量':' · 部分数据'}`:'还没有职位数据';$('status-detail').textContent=s.fetched_at?'更新于 '+new Date(s.fetched_at).toLocaleString('zh-CN')+` · ${s.source_name}报告 ${s.reported_total} 条`:'点击“刷新全量职位”开始，抓取约需一分钟。';if(wasRunning&&!data.error)await search();}
+  if(data.error&&data.source_id===source)error('抓取失败，旧缓存已保留：'+data.error);wasRunning=data.running;
+ }catch(e){error(e.message);}
+}
+$('filters').addEventListener('submit',e=>{e.preventDefault();search();});
+$('reset').onclick=()=>{restore({});search();};
+$('more').onclick=()=>{visible+=30;render();};
+$('crawl').onclick=async()=>{try{$('crawl').disabled=true;error('');await request('/api/crawl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_pages:0,source:$('source').value})});wasRunning=true;await status();}catch(e){$('crawl').disabled=false;error(e.message);}};
+try{restore(JSON.parse(localStorage.getItem('job-selector')||'{}'));}catch(e){restore({});}
+$('ranker').onchange=()=>search();
+$('source').onchange=()=>{const source=sources.find(s=>s.id===$('source').value);$('source-link').href=source.url;$('source-link').textContent='数据来源：'+source.name+' ↗';search();status();};
+async function init(){
+ try{sources=(await request('/api/sources')).sources;$('source').innerHTML=sources.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');const savedSource=localStorage.getItem('job-source');if(sources.some(s=>s.id===savedSource))$('source').value=savedSource;const savedRanker=localStorage.getItem('job-ranker');if([...$('ranker').options].some(o=>o.value===savedRanker))$('ranker').value=savedRanker;$('source').disabled=false;$('source').onchange();setInterval(status,2000);}catch(e){error(e.message);}
+}
+init();
+</script>
+</body>
+</html>

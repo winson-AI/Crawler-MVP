@@ -1,0 +1,10 @@
+{
+  "locations": ["北京", "上海"],
+  "years": 3,
+  "include_unknown_experience": false,
+  "technologies": ["Python", "Java"],
+  "technology_mode": "any",
+  "keywords": ["研发", "算法"],
+  "keyword_mode": "any",
+  "exclude_keywords": ["实习"]
+}

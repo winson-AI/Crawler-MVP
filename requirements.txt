@@ -1,0 +1,2 @@
+# Only ByteDance and Pinduoduo need a normal browser session.
+playwright>=1.55,<2
