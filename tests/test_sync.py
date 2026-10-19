@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from jobcrawler.crawler import cache_path, save_cache
 from jobcrawler.models import build_job
@@ -29,6 +30,10 @@ class SyncTests(unittest.TestCase):
         self.cache = root / "data/jobs.json"
         self.state = root / "data/sync-state.json"
         self.output = root / "output"
+        fake_sources = patch("jobcrawler.incremental.get_source", side_effect=lambda s:
+            SimpleNamespace(id=s, name=s, url="https://example.com", fetch_page=lambda page: None))
+        fake_sources.start()
+        self.addCleanup(fake_sources.stop)
 
     def run_sync(self, **kwargs):
         return sync_jobs(state_path=self.state, cache=self.cache, output=self.output, **kwargs)

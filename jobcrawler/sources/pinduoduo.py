@@ -5,6 +5,7 @@ from ..models import build_job
 from .base import JobPage
 from .browser import BrowserSource
 from .common import iso_date, locations, plain_text, require_list
+from ..verification import VerificationRequired
 
 
 def normalize_job(raw):
@@ -22,6 +23,8 @@ class PinduoduoSource(BrowserSource):
     _current_page = 0
     _detail_page = None
     verification_timeout = 180
+    verification_callback = None
+    requires_listing_replay = True
 
     def launch_browser(self, playwright):
         # The public site rejects Chromium's default WebDriver context with 400023.
@@ -62,24 +65,40 @@ class PinduoduoSource(BrowserSource):
             # If it shows a CAPTCHA, the user completes it in Chrome; never solve it here.
             from playwright.sync_api import TimeoutError as BrowserTimeout
             print(f"拼多多：等待官网自动验证；若出现交互验证码请手动完成（最多等待 {self.verification_timeout} 秒）。", flush=True)
-            page.bring_to_front()
             body = response.request.post_data_json or {}
             operation = {key: body[key] for key in ("code", "page") if key in body}
             deadline = time.monotonic() + self.verification_timeout
+            notified = False
             try:
                 while payload.get("errorCode") == 54001:
                     if pending_responses:
                         payload = self.response_payload(pending_responses.pop(0))
                         continue
-                    with page.expect_response(lambda result:
-                            urlsplit(result.url).path == endpoint
-                            and all((result.request.post_data_json or {}).get(key) == value for key, value in operation.items()),
-                            timeout=max(1, (deadline - time.monotonic()) * 1000)) as pending:
-                        pass
+                    if (self.verification_callback and not notified
+                            and page.get_by_placeholder("请输入上图计算结果", exact=True).is_visible() is True):
+                        page.bring_to_front()
+                        self.verification_callback(page, endpoint, operation, "needs_human")
+                        notified = True
+                    remaining = (deadline - time.monotonic()) * 1000
+                    if remaining <= 0:
+                        raise BrowserTimeout("verification deadline reached")
+                    try:
+                        with page.expect_response(lambda result:
+                                urlsplit(result.url).path == endpoint
+                                and all((result.request.post_data_json or {}).get(key) == value for key, value in operation.items()),
+                                timeout=min(remaining, 1000) if self.verification_callback else remaining) as pending:
+                            pass
+                    except BrowserTimeout:
+                        if self.verification_callback and time.monotonic() < deadline:
+                            continue
+                        raise
                     response = pending_responses.pop(0) if pending_responses else pending.value
                     payload = self.response_payload(response)
             except BrowserTimeout as exc:
-                raise RuntimeError("拼多多官网验证响应超时；如有验证码，请在 Chrome 手动完成后重试；保留旧缓存") from exc
+                evidence = self.verification_callback(page, endpoint, operation, "needs_human" if notified else "unknown") if self.verification_callback else None
+                raise VerificationRequired("拼多多官网验证响应超时；如有验证码，请在 Chrome 手动完成后恢复；保留旧缓存", evidence) from exc
+            if notified and payload.get("success") is True:
+                self.verification_callback(page, endpoint, operation, "cleared")
         return payload
 
     def fetch_detail(self, code):
@@ -91,10 +110,10 @@ class PinduoduoSource(BrowserSource):
         return self._load_operation(page, endpoint, {"code": code}, lambda:
             page.goto(self.url + "/detail?" + urlencode({"code": code}), wait_until="domcontentloaded", timeout=45000))
 
-    def fetch_page(self, page):
+    def fetch_list_page(self, page):
         if self._context is None:
             with self.session():
-                return self.fetch_page(page)
+                return self.fetch_list_page(page)
 
         if page == 1:
             if self._listing_page:
@@ -115,15 +134,28 @@ class PinduoduoSource(BrowserSource):
         data = payload.get("result")
         rows = require_list(data, "list", self.name)
         self._current_page = page
+        return JobPage(page, int(data["total"]), [normalize_job(raw) for raw in rows], has_more=page * 10 < int(data["total"]))
+
+    def fetch_job_detail(self, job):
+        detail = self.fetch_detail(job["id"])
+        if detail.get("success") is not True or not isinstance(detail.get("result"), dict):
+            raise RuntimeError(f"拼多多职位详情获取失败: {job['id']} / {detail.get('errorCode')} / {detail.get('errorMsg')}")
+        raw = {"code": job["id"], "name": job["title"], "workLocation": "/".join(job["locations"]),
+               "updateTime": job["updated_at"], "recruitType": job["category"]}
+        merged = {**raw, **detail["result"]}
+        if merged.get("code") != job["id"]:
+            raise RuntimeError("拼多多详情 ID 与列表不一致")
+        return normalize_job(merged)
+
+    def fetch_page(self, page):
+        if self._context is None:
+            with self.session():
+                return self.fetch_page(page)
+        listing = self.fetch_list_page(page)
         jobs = []
-        for index, raw in enumerate(rows):
+        for index, job in enumerate(listing.jobs):
             if index:
                 time.sleep(0.1)
-            detail = self.fetch_detail(raw["code"])
-            if detail.get("success") is not True or not isinstance(detail.get("result"), dict):
-                raise RuntimeError(f"拼多多职位详情获取失败: {raw['code']} / {detail.get('errorCode')} / {detail.get('errorMsg')}")
-            merged = {**raw, **detail["result"]}
-            if merged.get("code") != raw["code"]:
-                raise RuntimeError("拼多多详情 ID 与列表不一致")
-            jobs.append(normalize_job(merged))
-        return JobPage(page, int(data["total"]), jobs, has_more=page * 10 < int(data["total"]))
+            jobs.append(self.fetch_job_detail(job))
+        listing.jobs = jobs
+        return listing

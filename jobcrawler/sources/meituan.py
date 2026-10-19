@@ -18,10 +18,11 @@ def normalize_job(raw):
 
 class MeituanSource:
     id, name, url = "meituan", "美团社会招聘", "https://hr.meituan.com/web/social"
+    page_size = 10
 
     def fetch_page(self, page):
         payload = HttpClient(self.name, self.url).request("https://hr.meituan.com/api/official/job/getJobList", {
-            "page": {"pageNo": page, "pageSize": 10}, "jobShareType": "1", "keywords": "",
+            "page": {"pageNo": page, "pageSize": self.page_size}, "jobShareType": "1", "keywords": "",
             "cityList": [], "department": [], "jfJgList": [], "jobType": [{"code": "3", "subCode": []}], "typeCode": [],
         })
         if payload.get("status") != 1 or not isinstance(payload.get("data"), dict):
@@ -30,4 +31,5 @@ class MeituanSource:
         rows = require_list(data, "list", self.name)
         if any(str(raw.get("jobType")) != "3" for raw in rows):
             raise RuntimeError("美团返回了非社招职位")
-        return JobPage(int(data["page"]["pageNo"]), int(data["page"]["totalCount"]), [normalize_job(raw) for raw in rows])
+        current, total = int(data["page"]["pageNo"]), int(data["page"]["totalCount"])
+        return JobPage(current, total, [normalize_job(raw) for raw in rows], has_more=current * self.page_size < total)

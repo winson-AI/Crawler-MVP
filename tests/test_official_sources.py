@@ -99,7 +99,8 @@ class OfficialSourceTests(unittest.TestCase):
     def test_tencent_requires_details_and_id_consistency(self, factory, sleep):
         client = factory.return_value
         raw = fixture("tencent")
-        listing = {"Code": 200, "Data": {"Count": 15, "Posts": [{"PostId": raw["PostId"]}]}}
+        listing = {"Code": 200, "Data": {"Count": 15, "Posts": [{k: raw[k] for k in
+            ("PostId", "RecruitPostName", "LocationName", "LastUpdateTime") if k in raw}]}}
         client.request.side_effect = [listing, {"Code": 200, "Data": raw}]
         page = TencentSource().fetch_page(2)
         self.assertEqual(page.jobs[0]["requirements"], raw["Requirement"])
@@ -120,6 +121,15 @@ class OfficialSourceTests(unittest.TestCase):
         raw["jobType"] = "1"
         with self.assertRaisesRegex(RuntimeError, "非社招"):
             MeituanSource().fetch_page(2)
+
+    @patch("jobcrawler.sources.meituan.HttpClient")
+    def test_meituan_reports_last_page_even_when_rows_contain_duplicate_ids(self, factory):
+        raw = fixture("meituan")
+        factory.return_value.request.return_value = {"status": 1, "data": {
+            "list": [raw, raw], "page": {"pageNo": 3, "totalCount": 25}}}
+        page = MeituanSource().fetch_page(3)
+        self.assertFalse(page.has_more)
+        self.assertEqual(page.jobs[0]["id"], page.jobs[1]["id"])
 
     @patch("jobcrawler.sources.jd.HttpClient")
     def test_jd_count_and_pagination_form(self, factory):
@@ -166,8 +176,8 @@ class OfficialSourceTests(unittest.TestCase):
         source._context = MagicMock()
         page = source._context.new_page.return_value
         response = MagicMock(status=200)
-        response.json.side_effect = [{"success": True, "result": {"list": [{"code": "test-1"}], "total": 2}},
-                                     {"success": True, "result": {"list": [{"code": "test-2"}], "total": 2}}]
+        response.json.side_effect = [{"success": True, "result": {"list": [{"code": "test-1", "name": "Java工程师"}], "total": 2}},
+                                     {"success": True, "result": {"list": [{"code": "test-2", "name": "Java工程师"}], "total": 2}}]
         page.expect_response.return_value.__enter__.return_value.value = response
         details = [{"success": True, "result": {"code": code, "name": "Java工程师", "workLocation": "上海",
                     "serveRequirement": "3年以上开发经验，熟悉Java", "jobDuty": "后端研发"}}

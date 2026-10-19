@@ -11,6 +11,12 @@ from .sources import get_source
 DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "data" / "jobs.json"
 
 
+class PaginationError(RuntimeError):
+    def __init__(self, message, page):
+        super().__init__(message)
+        self.page = page
+
+
 def cache_path(source="baidu", base=DEFAULT_CACHE):
     get_source(source)
     base = Path(base)
@@ -53,7 +59,7 @@ def _crawl_pages(adapter, fetch, max_pages, delay, progress):
         if complete:
             break
         if not rows or not added:
-            raise RuntimeError(f"分页未前进：第 {page} 页，仅收集 {len(jobs)}/{total} 条；保留旧缓存")
+            raise PaginationError(f"分页未前进：第 {page} 页，仅收集 {len(jobs)}/{total} 条；保留旧缓存", page)
         if max_pages and page >= max_pages:
             break
         if page >= 1000:
