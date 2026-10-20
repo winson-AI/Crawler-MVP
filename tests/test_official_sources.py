@@ -171,25 +171,84 @@ class OfficialSourceTests(unittest.TestCase):
             source.response_payload(response)
 
     def test_pdd_pagination_contract_uses_normal_next_button_and_details(self):
-        # Contract-only test: upstream currently rejects real list/detail requests.
         source = PinduoduoSource()
         source._context = MagicMock()
         page = source._context.new_page.return_value
         response = MagicMock(status=200)
-        response.json.side_effect = [{"success": True, "result": {"list": [{"code": "test-1", "name": "Java工程师"}], "total": 2}},
-                                     {"success": True, "result": {"list": [{"code": "test-2", "name": "Java工程师"}], "total": 2}}]
+        rows = [{"code": f"test-{i}", "name": "Java工程师"} for i in range(1, 52)]
+        response.json.side_effect = [{"success": True, "result": {"list": rows[:10], "total": 51}},
+                                     {"success": True, "result": {"list": rows[:50], "total": 51}},
+                                     {"success": True, "result": {"list": rows[50:], "total": 51}}]
         page.expect_response.return_value.__enter__.return_value.value = response
         details = [{"success": True, "result": {"code": code, "name": "Java工程师", "workLocation": "上海",
                     "serveRequirement": "3年以上开发经验，熟悉Java", "jobDuty": "后端研发"}}
-                   for code in ("test-1", "test-2")]
-        with patch.object(source, "fetch_detail", side_effect=details):
+                   for code in (row["code"] for row in rows)]
+        with patch.object(source, "fetch_detail", side_effect=details), patch("jobcrawler.sources.pinduoduo.time.sleep"):
             first, second = source.fetch_page(1), source.fetch_page(2)
-        self.assertEqual([first.jobs[0]["id"], second.jobs[0]["id"]], ["test-1", "test-2"])
+        self.assertEqual([first.jobs[0]["id"], second.jobs[0]["id"]], ["test-1", "test-51"])
+        self.assertEqual(len(first.jobs), 50)
+        self.assertTrue(first.has_more)
+        self.assertFalse(second.has_more)
         self.assertEqual(second.jobs[0]["experience"]["min"], 3)
+        self.assertEqual(source.listing_setup_requests, 1)
+        self.assertEqual([call.args[0] for call in page.get_by_text.call_args_list], ["10 条/页", "50 条/页"])
         page.goto.assert_called_once()
         page.get_by_title.assert_called_once_with("下一页", exact=True)
         page.get_by_title.return_value.click.assert_called_once()
         source._context = None
+
+    def test_pdd_rejects_page_size_selection_that_did_not_take_effect(self):
+        source = PinduoduoSource()
+        source._context = MagicMock()
+        payload = {"success": True, "result": {"list": [{"code": "one", "name": "工程师"}], "total": 100}}
+        with patch.object(source, "_load_operation", return_value=payload), patch("jobcrawler.sources.pinduoduo.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "分页大小"):
+                source.fetch_list_page(1)
+
+    def test_pdd_refresh_reuses_live_tab_and_requests_fresh_first_page(self):
+        source = PinduoduoSource()
+        source._context = MagicMock()
+        source._listing_page = page = MagicMock()
+        page.is_closed.return_value = False
+        source._current_page = 16
+        source.listing_setup_requests = 1
+        payload = {"success": True, "result": {"list": [
+            {"code": str(i), "name": "工程师"} for i in range(50)], "total": 784}}
+        def load(page, endpoint, operation, action):
+            action()
+            return payload
+        with patch.object(source, "_load_operation", side_effect=load) as request:
+            result = source.fetch_list_page(1)
+        self.assertEqual(len(result.jobs), 50)
+        self.assertTrue(source.listing_page_reused)
+        self.assertEqual(source.listing_setup_requests, 1)
+        self.assertEqual(request.call_args.args[2], {"page": 1})
+        page.get_by_role.assert_called_once_with("button", name="搜 索", exact=True)
+        page.get_by_role.return_value.click.assert_called_once()
+        page.goto.assert_not_called()
+        page.close.assert_not_called()
+        page.get_by_text.assert_not_called()
+        source._context.new_page.assert_not_called()
+
+    def test_pdd_nested_sessions_borrow_browser_until_owner_exits(self):
+        source = PinduoduoSource()
+        calls = []
+        @contextmanager
+        def owner(adapter):
+            calls.append("open")
+            adapter._context = object()
+            try:
+                yield
+            finally:
+                calls.append("close")
+                adapter._context = None
+        with patch.object(BrowserSource, "session", owner):
+            with source.session():
+                context = source._context
+                with source.session():
+                    self.assertIs(source._context, context)
+                self.assertEqual(calls, ["open"])
+            self.assertEqual(calls, ["open", "close"])
 
     def test_browser_session_closed_after_failed_crawl(self):
         events = []
@@ -285,6 +344,37 @@ class OfficialSourceTests(unittest.TestCase):
         source._context.new_page.assert_called_once()
         self.assertEqual(page.goto.call_count, 2)
         page.close.assert_not_called()
+
+    @unittest.skipUnless(importlib.util.find_spec("playwright"), "需要可选 Playwright 依赖")
+    def test_pdd_transient_verification_does_not_request_human_input(self):
+        source = PinduoduoSource()
+        source.verification_callback = MagicMock()
+        first = MagicMock(status=200)
+        first.json.return_value = {"success": False, "errorCode": 54001}
+        final = MagicMock(status=200)
+        final.json.return_value = {"success": True, "result": {"code": "one"}}
+        page = MagicMock()
+        page.get_by_placeholder.return_value.is_visible.return_value = True
+        page.expect_response.return_value.__enter__.return_value.value = final
+        with patch("jobcrawler.sources.pinduoduo.time.monotonic", return_value=0):
+            self.assertTrue(source.read_response(page, first, "/detail")["success"])
+        source.verification_callback.assert_not_called()
+        page.bring_to_front.assert_not_called()
+
+    @unittest.skipUnless(importlib.util.find_spec("playwright"), "需要可选 Playwright 依赖")
+    def test_pdd_short_timeout_still_records_visible_human_challenge(self):
+        source = PinduoduoSource()
+        source.verification_timeout = 2
+        source.verification_callback = MagicMock(return_value="verification.json")
+        first = MagicMock(status=200)
+        first.json.return_value = {"success": False, "errorCode": 54001}
+        page = MagicMock()
+        page.get_by_placeholder.return_value.is_visible.return_value = True
+        with patch("jobcrawler.sources.pinduoduo.time.monotonic", side_effect=[0, 2, 2]):
+            with self.assertRaisesRegex(RuntimeError, "验证响应超时"):
+                source.read_response(page, first, "/detail")
+        self.assertEqual(source.verification_callback.call_args.args[-1], "needs_human")
+        page.get_by_placeholder.return_value.fill.assert_not_called()
 
     def test_http_checkpoint_resumes_after_failed_page(self):
         raw = fixture("alibaba")

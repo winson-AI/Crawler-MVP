@@ -1,2 +1,3 @@
 # Only ByteDance and Pinduoduo need a normal browser session.
 playwright>=1.55,<2
+beautifulsoup4>=4.12,<5

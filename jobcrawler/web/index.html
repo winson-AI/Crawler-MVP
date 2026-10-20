@@ -6,6 +6,9 @@
 <style>
 :root{--bg:#f4f6f9;--ink:#172b3a;--muted:#667b8b;--line:#dfe7ed;--accent:#087b72}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 system-ui,-apple-system,sans-serif}button,input,select{font:inherit}button,a,input,select{outline-offset:3px}header{background:#153b42;color:white;padding:28px max(24px,calc((100vw - 1320px)/2));display:flex;align-items:center;justify-content:space-between;gap:20px}h1{font-size:25px;margin:0}header p{color:#bed8d8;margin:5px 0 0;font-size:13px}.eyebrow{font:11px monospace;letter-spacing:3px;color:#8bcbc3;margin-bottom:7px}.source{color:#d3ece9;font-size:13px}main{max-width:1368px;margin:auto;padding:28px 24px;display:grid;grid-template-columns:292px 1fr;gap:26px}.panel,.job,.status{background:white;border:1px solid var(--line);border-radius:12px}.panel{padding:22px;align-self:start;position:sticky;top:20px}h2{font-size:17px;margin:0 0 20px}label{display:block;font-weight:600;font-size:13px;margin:18px 0 7px}input[type=text],input[type=number],select{width:100%;border:1px solid #c8d6de;background:white;border-radius:7px;padding:9px 11px;color:var(--ink)}input:focus,select:focus{border-color:var(--accent);outline:2px solid #d4eeea}small,.hint{color:var(--muted);font-size:12px}.mode{display:flex;align-items:center;justify-content:space-between;gap:12px}.mode select{width:100px;font-size:12px;padding:3px 6px}.check{display:flex;gap:8px;align-items:center;font-weight:400;margin-top:9px}.check input{accent-color:var(--accent)}button,.export{border:0;cursor:pointer;border-radius:7px;padding:9px 14px;background:var(--accent);color:white;font-weight:600;font-size:13px;text-decoration:none;display:inline-block}button:disabled{opacity:.55;cursor:wait}.secondary,.export{background:#eef4f4;color:var(--accent)}.actions{display:flex;gap:8px;margin-top:22px}.actions button:first-child{flex:1}.status{padding:18px 22px;margin-bottom:23px;display:flex;justify-content:space-between;align-items:center;gap:20px}.status strong{font-size:14px}.status p{margin:5px 0 0;font-size:12px;color:var(--muted)}.live-dot{display:inline-block;width:7px;height:7px;background:#0b9685;border-radius:50%;margin-right:8px}.result-head{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:15px}.result-head h2{margin:0;font-size:20px}.exports{display:flex;gap:8px}.job{margin-bottom:13px;padding:22px 24px}.job-head{display:flex;justify-content:space-between;gap:16px}.job h3{font-size:17px;margin:0 0 7px}.job h3 a{color:var(--ink);text-decoration:none}.job h3 a:hover{color:var(--accent)}.meta{font-size:12px;color:var(--muted)}.date{font:12px monospace;color:var(--muted);white-space:nowrap}.chips{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0}.chip{background:#f1f5f8;color:#496271;padding:3px 8px;font-size:11px;border-radius:5px}.chip.match{background:#e1f3ed;color:#146c55}.experience{font-size:12px;margin-top:12px;color:#45646c}.snippet{font-size:13px;color:#647785;margin:8px 0;white-space:pre-line}details{margin-top:12px;border-top:1px solid #edf1f4;padding-top:11px}summary{cursor:pointer;color:var(--accent);font-size:12px;font-weight:600}pre{font:13px/1.85 system-ui,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0}.empty{border:1px dashed #c5d4dd;border-radius:12px;text-align:center;color:var(--muted);padding:64px 20px;background:#ffffff80}.error{display:none;background:#fff0ee;color:#9e3529;padding:12px 16px;margin:0 0 18px;border-radius:8px;font-size:13px}.more{text-align:center;margin:24px 0}.footer{font-size:11px;color:#82949f;text-align:center;margin-top:26px}.loading{color:var(--muted);padding:30px} @media(max-width:800px){header{padding:22px;align-items:start}.source{display:none}main{grid-template-columns:1fr;padding:18px}.panel{position:static}.status{align-items:start}.job-head{display:block}.date{display:block;margin-top:7px}.result-head{flex-wrap:wrap}}
 </style>
+<style>
+.source-editor{position:static;margin-bottom:20px;padding:16px 22px}.source-editor summary{font-size:14px}.source-editor textarea{box-sizing:border-box;width:100%;border:1px solid #c8d6de;border-radius:7px;padding:10px;font:12px/1.6 monospace;resize:vertical}.source-editor pre{max-height:240px;overflow:auto;background:#f4f6f9;padding:10px}.source-editor select{max-width:270px}.source-editor .actions{flex-wrap:wrap}.source-editor p{overflow-wrap:anywhere}
+</style>
 </head>
 <body>
 <header><div><div class="eyebrow">JOB RADAR / 01</div><h1>职位雷达</h1><p>让下一份工作，更接近你的方向。</p></div><a id="source-link" class="source" href="https://talent.baidu.com/jobs/social-list" target="_blank" rel="noopener">数据来源：百度社会招聘 ↗</a></header>
@@ -13,7 +16,7 @@
 <form class="panel" id="filters">
 <h2>设置你的 Selector</h2>
 <label for="source">招聘数据源</label><select id="source" disabled><option value="baidu">百度社会招聘</option></select>
-<label for="locations">工作地点</label><input id="locations" type="text" placeholder="北京，上海，深圳"><small>多个地点任选其一；支持省略“市”</small>
+<label for="locations">工作地点</label><input id="locations" type="text" placeholder='北京，上海，"Foster City, CA"'><small>多个地点任选其一；支持省略“市”；地点含逗号时加双引号</small>
 <label for="years">我的工作年限</label><input id="years" type="number" min="0" max="80" step="0.5" placeholder="例如：3"><small>匹配职位要求的年限范围；留空不限</small>
 <label class="check"><input id="unknown" type="checkbox">保留未明确年限的职位</label>
 <label class="mode" for="tech">技术栈<select id="tech-mode" aria-label="技术栈匹配方式"><option value="all">全部命中</option><option value="any">任一命中</option></select></label><input id="tech" type="text" placeholder="Python，Java，Go"><small>不区分大小写；多个词用逗号分隔</small>
@@ -24,6 +27,23 @@
 </form>
 <section>
 <div class="status"><div><strong><span class="live-dot"></span><span id="status-title">正在读取缓存…</span></strong><p id="status-detail">首次使用请抓取职位数据。</p></div><button id="crawl" type="button">刷新全量职位</button></div>
+<details class="panel source-editor" id="source-manager"><summary>添加网站 / 适配规则 / 导入登录后的职位文档</summary>
+<form id="source-editor">
+<label for="source-url">目标招聘网址</label><input id="source-url" type="url" placeholder="https://jobs.lever.co/公司 或你的职位网址">
+<div class="actions"><button type="button" class="secondary" id="match-template">匹配并复用模板</button><button type="button" class="secondary" id="reuse-source" hidden>切换已有平台库</button></div>
+<p id="template-message" class="hint" role="status" aria-live="polite">正在读取模板目录…</p>
+<details><summary>网站模板目录（覆盖范围与来源）</summary><div id="template-catalog"></div></details>
+<label for="source-template">配置模板</label><select id="source-template"><option value="schema">公开网页 · 自动识别 JobPosting</option><option value="json">公开 JSON 职位接口</option><option value="dom">HTML · CSS 选择器适配</option><option value="public_browser">独立匿名浏览器 · 公开动态职位</option><option value="browser">五平台 · 已授权 Chrome 实时页面</option><option value="document">BOSS 上海 · 登录后文档导入</option></select>
+<label for="source-config">网站配置 JSON</label><textarea id="source-config" rows="12" spellcheck="false" required></textarea>
+<p class="hint">模板失效或缺少规则时自动探测同一份文档；成功后保存新映射，失败不覆盖旧职位。auto_adapt=false 可关闭探测。未配置分页仅采集当前 URL 范围。不要填写密码、Cookie 或验证码令牌。</p>
+<label for="source-document">职位页面文档（可选 HTML / JSON）</label><textarea id="source-document" rows="5" spellcheck="false" placeholder='登录站点可提交只含职位的文档，例如 {"jobs":[{"title":"工程师","url":"https://网站/job/1","company":"公司"}]}；不保存原始文档'></textarea>
+<label class="check"><input id="document-mode" type="checkbox">将本次提交文档作为文档导入源（不声称后台联网）</label>
+<p class="hint">mode=document 用于登录后的页面文档，不会复制 Chrome 登录态；后续需重新导入，不能假装联网刷新。</p>
+<p class="hint">mode=public_browser 使用全新隔离的匿名 Chrome，不连接原浏览器、不读取登录资料。仅执行官网正常公开脚本；遇到登录/验证码停止，不请求人工处理。未配置分页只采当前页。</p>
+<p class="hint">mode=browser 仅用于 BOSS、智联、前程无忧、猎聘、拉勾；需手动开启 Chrome remote debugging 并确认 Allow。同一服务复用连接，不导出 Cookie；登录/验证码需人工完成。只采当前页，新网络响应与职位逐条核对，失败保留旧库。</p>
+<div class="actions"><button type="button" class="secondary" id="preview-source">解析预览（不保存）</button><button type="submit" id="mount-source">保存并自动挂载</button></div>
+<p id="source-message" role="status" aria-live="polite"></p><pre id="source-preview" hidden></pre>
+</form></details>
 <div class="error" id="error" role="alert"></div>
 <label class="mode" for="ranker">结果排序<select id="ranker" style="width:180px"><option value="published_desc">发布时间：新 → 旧</option><option value="published_asc">发布时间：旧 → 新</option><option value="experience_asc">工作年限：低 → 高</option><option value="experience_desc">工作年限：高 → 低</option></select></label>
 <div class="result-head"><h2>匹配职位 <span id="count">0</span> <small>条</small></h2><div class="exports"><a class="export" id="json-export">JSON ↓</a><a class="export" id="csv-export">CSV ↓</a></div></div>
@@ -34,7 +54,13 @@
 <script>
 const $ = id => document.getElementById(id);
 let jobs = [], visible = 30, active = {}, wasRunning = false, searchVersion = 0, sources = [];
-const terms = id => $(id).value.split(/[,，、\n]/).map(x=>x.trim()).filter(Boolean);
+function splitTerms(value){
+ const result=[];let part='',quoted=false;
+ for(let i=0;i<value.length;i++){const c=value[i];if(c==='"'){if(quoted&&value[i+1]==='"'){part+='"';i++;}else quoted=!quoted;}else if(!quoted&&/[,，、\n]/.test(c)){if(part.trim())result.push(part.trim());part='';}else part+=c;}
+ if(part.trim())result.push(part.trim());return result;
+}
+const terms = id => splitTerms($(id).value);
+const joinTerms = values => (values||[]).map(value=>/[,，、\n"]/.test(value)?'"'+value.replace(/"/g,'""')+'"':value).join('，');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function selector(){return {locations:terms('locations'),years:$('years').value===''?null:Number($('years').value),include_unknown_experience:$('unknown').checked,technologies:terms('tech'),technology_mode:$('tech-mode').value,keywords:terms('keywords'),keyword_mode:$('keyword-mode').value,exclude_keywords:terms('exclude')};}
 function error(message){$('error').textContent=message;$('error').style.display=message?'block':'none';}
@@ -46,7 +72,7 @@ function render(){
  $('results').innerHTML=jobs.slice(0,visible).map(job=>{
   const e=job.experience;
   const experience=e.min===null?'年限未明确':e.max===null?(e.min===0?'经验不限':`${e.min} 年及以上`):`${e.min}–${e.max} 年`;
-  const chips=[...job.technologies.map(t=>`<span class="chip">${esc(t)}</span>`),...job.matches.technologies.map(t=>`<span class="chip match">技术：${esc(t)}</span>`),...job.matches.keywords.map(t=>`<span class="chip match">关键词：${esc(t)}</span>`)].join('');
+  const chips=[...(job.details_pending?['<span class="chip">详情待补抓 · 已有内容可能为旧版</span>']:[]),...job.technologies.map(t=>`<span class="chip">${esc(t)}</span>`),...job.matches.technologies.map(t=>`<span class="chip match">技术：${esc(t)}</span>`),...job.matches.keywords.map(t=>`<span class="chip match">关键词：${esc(t)}</span>`)].join('');
   return `<article class="job"><div class="job-head"><div><h3><a href="${esc(job.url)}" target="_blank" rel="noopener">${esc(job.title)} ↗</a></h3><div class="meta">${esc(job.company)} · ${esc(job.locations.join(' / '))} · ${esc(job.department)} · ${esc(job.category)}</div></div><span class="date">发布：${esc(job.published_at||'未知')}</span></div><div class="experience">${esc(experience)}${e.evidence?' · 依据：'+esc(e.evidence):''}</div><div class="chips">${chips}</div><p class="snippet">${esc(job.description.slice(0,180))}${job.description.length>180?'…':''}</p><details><summary>查看任职要求与工作职责</summary><strong class="meta">任职要求</strong><pre>${esc(job.requirements)}</pre><strong class="meta">工作职责</strong><pre>${esc(job.description)}</pre></details></article>`;
  }).join('');
 }
@@ -55,22 +81,65 @@ async function search(){
  const next=selector();
  try{error('');const query=new URLSearchParams({selector:JSON.stringify(next),source:$('source').value,ranker:$('ranker').value});const data=await request('/api/jobs?'+query);if(version!==searchVersion)return;active=next;jobs=data.jobs;visible=30;render();for(const fmt of ['json','csv'])$(fmt+'-export').href='/api/export?'+query+'&format='+fmt;localStorage.setItem('job-selector',JSON.stringify(active));localStorage.setItem('job-source',$('source').value);localStorage.setItem('job-ranker',$('ranker').value);}catch(e){error(e.message);}
 }
-function restore(s){$('locations').value=(s.locations||[]).join('，');$('years').value=s.years??'';$('unknown').checked=!!s.include_unknown_experience;$('tech').value=(s.technologies||[]).join('，');$('tech-mode').value=s.technology_mode||'all';$('keywords').value=(s.keywords||[]).join('，');$('keyword-mode').value=s.keyword_mode||'all';$('exclude').value=(s.exclude_keywords||[]).join('，');}
+function restore(s){$('locations').value=joinTerms(s.locations);$('years').value=s.years??'';$('unknown').checked=!!s.include_unknown_experience;$('tech').value=joinTerms(s.technologies);$('tech-mode').value=s.technology_mode||'all';$('keywords').value=joinTerms(s.keywords);$('keyword-mode').value=s.keyword_mode||'all';$('exclude').value=joinTerms(s.exclude_keywords);}
 async function status(){
  const source=$('source').value;
- try{const data=await request('/api/status?'+new URLSearchParams({source}));if(source!==$('source').value)return;const s=data.snapshot;$('crawl').disabled=data.running;
-  if(data.running){const p=data.progress;$('status-title').textContent=p?`正在抓取 ${data.source_name}：${p.collected} / ${p.reported_total} 条`:`正在连接 ${data.source_name}…`;$('status-detail').textContent=p?`第 ${p.page} 页 · 完成后自动更新结果`:'抓取期间可继续筛选已有缓存';}
-  else{$('status-title').textContent=s.fetched_at?`已缓存 ${s.collected} 条${s.complete?' · 全量':' · 部分数据'}`:'还没有职位数据';$('status-detail').textContent=s.fetched_at?'更新于 '+new Date(s.fetched_at).toLocaleString('zh-CN')+` · ${s.source_name}报告 ${s.reported_total} 条`:'点击“刷新全量职位”开始，抓取约需一分钟。';if(wasRunning&&!data.error)await search();}
+ try{const data=await request('/api/status?'+new URLSearchParams({source}));if(source!==$('source').value)return;const s=data.snapshot;const custom=sources.find(item=>item.id===source)?.config;$('crawl').disabled=data.running;$('crawl').textContent=custom?.mode==='document'?'导入新职位文档':source==='pinduoduo'?'刷新列表（详情延后）':custom&&!custom.pagination?'刷新当前 URL 范围':'刷新全量职位';
+  if(data.running){const p=data.progress;
+   if(p?.phase==='adapting'){$('status-title').textContent='正在校验网站适配规则';$('status-detail').textContent='schema 和字段通过后才会挂载；失败不覆盖已有职位';}
+   else if(p?.phase==='cooldown'){$('status-title').textContent='刷新已排队，等待冷却';$('status-detail').textContent=`本次需等待约 ${p.seconds} 秒，保留原浏览器会话；冷却期间不请求列表`;}
+   else if(p?.phase==='details'){$('status-title').textContent=`正在整理 ${data.source_name}：${p.completed} / ${p.total} 条`;$('status-detail').textContent=`复用详情 ${p.detail_cache_hits+p.legacy_cache_hits} 条 · 待补抓 ${p.details_deferred||0} 条`;}
+   else if(p?.phase==='verification'){$('status-title').textContent=p.status==='cleared'?'官网验证已通过':'官网正在验证';$('status-detail').textContent=p.status==='cleared'?'继续刷新列表':'如有交互验证码，请在抓取程序的原窗口手动完成';}
+   else{$('status-title').textContent=p?`正在抓取 ${data.source_name}：${p.collected} / ${p.reported_total} 条`:`正在连接 ${data.source_name}…`;$('status-detail').textContent=p?`第 ${p.page} 页 · 完成后自动更新结果`:'抓取期间可继续筛选已有缓存';}}
+  else{$('status-title').textContent=s.fetched_at?`已缓存 ${s.collected} 条${s.complete?(s.scope==='document'?' · 文档范围完整':s.scope==='single_page'?' · 当前页完整':' · 列表完整'):' · 部分列表'}${s.pending_detail_count?` · ${s.pending_detail_count} 条详情待补抓`:''}`:'还没有职位数据';$('status-detail').textContent=s.fetched_at?'列表获取于 '+new Date(s.listing_fetched_at||s.fetched_at).toLocaleString('zh-CN')+` · ${s.source_name}报告 ${s.reported_total} 条`+(s.pending_detail_count?' · 待补抓详情可能缺失或为旧版，技术与年限筛选可能不完整':''):'点击刷新按钮开始，抓取耗时由平台和验证情况决定。';if(wasRunning&&!data.error)await search();}
+  if(s.scope==='document')$('status-detail').textContent+=' · 页面文档导入，仅本次文档范围，非全站抓取';
+  else if(s.scope==='single_page')$('status-detail').textContent+=' · 仅配置 URL 的当前页面范围，非全站抓取';
+  if(s.acquisition==='network'&&s.network_requests?.length){const n=s.network_requests[s.network_requests.length-1];$('status-detail').textContent+=` · 实际联网 HTTP ${n.http_status} · ${n.dns_mode==='cloudflare_doh'?'Fake-IP → 公网 DoH':'公网 DNS'}${n.tls_verified?' · TLS 已校验':''}`;}
+  if(s.acquisition==='browser_network'){$('status-detail').textContent+=' · 已授权 Chrome 实时联网 · 复用会话 · 禁用列表缓存';}
+  if(s.acquisition==='public_browser_network'){$('status-detail').textContent+=' · 独立匿名 Chrome · 不使用用户登录态 · 本轮新响应已核对';}
+  if(data.configuration_changed)$('status-detail').textContent+=' · 适配配置已变更，旧快照待刷新';
   if(data.error&&data.source_id===source)error('抓取失败，旧缓存已保留：'+data.error);wasRunning=data.running;
  }catch(e){error(e.message);}
 }
 $('filters').addEventListener('submit',e=>{e.preventDefault();search();});
 $('reset').onclick=()=>{restore({});search();};
 $('more').onclick=()=>{visible+=30;render();};
-$('crawl').onclick=async()=>{try{$('crawl').disabled=true;error('');await request('/api/crawl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_pages:0,source:$('source').value})});wasRunning=true;await status();}catch(e){$('crawl').disabled=false;error(e.message);}};
+$('crawl').onclick=async()=>{try{const config=sources.find(s=>s.id===$('source').value)?.config;if(config?.mode==='document'){$('source-manager').open=true;$('source-config').value=JSON.stringify(config,null,2);$('source-document').focus();return;}$('crawl').disabled=true;error('');await request('/api/crawl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_pages:0,source:$('source').value})});wasRunning=true;await status();}catch(e){$('crawl').disabled=false;error(e.message);}};
 try{restore(JSON.parse(localStorage.getItem('job-selector')||'{}'));}catch(e){restore({});}
 $('ranker').onchange=()=>search();
-$('source').onchange=()=>{const source=sources.find(s=>s.id===$('source').value);$('source-link').href=source.url;$('source-link').textContent='数据来源：'+source.name+' ↗';search();status();};
+$('source').onchange=()=>{const source=sources.find(s=>s.id===$('source').value);$('source-link').href=source.url;$('source-link').textContent='数据来源：'+source.name+' ↗';if(source.config)$('source-config').value=JSON.stringify(source.config,null,2);search();status();};
+function sourceTemplate(){
+ const type=$('source-template').value;
+ const config={id:'custom_example',name:'我的招聘网站',url:'https://example.com/jobs',mode:'http',parser:type==='schema'?'auto':type};
+ if(type==='json')config.items='jobs';
+ if(type==='dom'){config.items='.job-card';config.fields={title:'.job-title',url:{selector:'a.job-title',attr:'href'},company:'.company',locations:'.location',work_years:'.experience',description:'.description'};}
+ if(type==='document')Object.assign(config,{id:'custom_boss_shanghai',name:'BOSS直聘·上海（登录文档）',url:'https://www.zhipin.com/web/geek/jobs?city=101020100&position=101310',mode:'document',parser:'json',items:'jobs'});
+ if(type==='browser')Object.assign(config,{id:'custom_boss_browser',name:'BOSS直聘·当前页面（会话实时）',url:'https://www.zhipin.com/web/geek/jobs',mode:'browser',parser:'auto'});
+ if(type==='public_browser')Object.assign(config,{id:'custom_51job_campus',name:'前程无忧·亚信校招当前页',company:'亚信',url:'https://campus.51job.com/asiainfo/jobs.html',mode:'public_browser',parser:'auto'});
+ $('source-config').value=JSON.stringify(config,null,2);$('source-preview').hidden=true;$('source-message').textContent='';
+}
+$('source-template').onchange=sourceTemplate;sourceTemplate();
+async function matchTemplate(){
+ const button=$('match-template');button.disabled=true;$('reuse-source').hidden=true;
+ try{const data=await request('/api/templates/match',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:$('source-url').value.trim()})});$('source-config').value=JSON.stringify(data.config,null,2);$('source-preview').hidden=true;$('template-message').textContent=`匹配：${data.template.name} · ${data.template.kind}。`+data.warnings.join('；');if(data.template.source){$('reuse-source').hidden=false;$('reuse-source').onclick=()=>{$('source').value=data.template.source;$('source').onchange();};}}
+ catch(e){$('template-message').textContent='匹配失败：'+e.message;}finally{button.disabled=false;}
+}
+$('match-template').onclick=matchTemplate;
+async function loadTemplates(){try{const data=await request('/api/templates');const labels={builtin:'复用已有适配器',public_api:'官方公开接口映射 · 待目标实测',public_dom:'公开当前页 DOM · 非全站列表',public_browser_dom:'匿名公开动态 DOM · 无需登录',browser_dom:'已授权 Chrome 当前页 DOM',document_probe:'仅站点识别 · 需页面探测',generic:'通用探测器'};$('template-message').textContent=`${data.templates.length} 项目录规则 · ${data.learned.length} 个本机网站配置；非全球网站全集，目录匹配不代表抓取成功。`;$('template-catalog').innerHTML=data.templates.map(t=>`<p><a href="${esc(t.reference)}" target="_blank" rel="noopener">${esc(t.name)}</a> · ${esc(labels[t.kind]||t.kind)}</p>`).join('');}catch(e){$('template-message').textContent=e.message;}}
+loadTemplates();
+async function configureSource(commit){
+ const buttons=[$('preview-source'),$('mount-source')];buttons.forEach(button=>button.disabled=true);
+ try{
+  const config=JSON.parse($('source-config').value);if($('document-mode').checked)config.mode='document';const body={config};if($('source-document').value.trim())body.document=$('source-document').value;
+  $('source-message').textContent='正在解析并校验…';
+  const data=await request(commit?'/api/sources/custom':'/api/sources/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  $('source-config').value=JSON.stringify(data.config,null,2);
+  $('source-message').textContent=`${commit?'已挂载':'预览通过'}：${data.collected} 条 · ${data.parser_used}${data.adaptation?' · 已自动适配并生成映射':''} · ${{network:'真实 HTTP 联网',public_browser_network:'独立匿名浏览器实时联网',browser_network:'已授权 Chrome 实时联网',provided_document:'提供的页面文档'}[data.acquisition]||'采集证据未确认'}${data.refreshing?'；正在后台刷新配置范围':''}。`+(data.warnings||[]).join('；');
+  $('source-preview').textContent=JSON.stringify(data.sample,null,2);$('source-preview').hidden=false;
+  if(commit){const current=data.config.id;sources=(await request('/api/sources')).sources;$('source').innerHTML=sources.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');$('source').value=current;$('source').onchange();wasRunning=!!data.refreshing;loadTemplates();}
+ }catch(e){$('source-message').textContent='适配未通过：'+e.message;}finally{buttons.forEach(button=>button.disabled=false);}
+}
+$('preview-source').onclick=()=>configureSource(false);$('source-editor').onsubmit=event=>{event.preventDefault();configureSource(true);};
 async function init(){
  try{sources=(await request('/api/sources')).sources;$('source').innerHTML=sources.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');const savedSource=localStorage.getItem('job-source');if(sources.some(s=>s.id===savedSource))$('source').value=savedSource;const savedRanker=localStorage.getItem('job-ranker');if([...$('ranker').options].some(o=>o.value===savedRanker))$('ranker').value=savedRanker;$('source').disabled=false;$('source').onchange();setInterval(status,2000);}catch(e){error(e.message);}
 }

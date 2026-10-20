@@ -18,10 +18,8 @@ DEFAULT_OUTPUT = DEFAULT_CACHE.parent.parent / "output" / "incremental"
 
 def sync_jobs(sources=None, state_path=DEFAULT_STATE, cache=DEFAULT_CACHE,
               output=DEFAULT_OUTPUT, initialize=False, selector=None,
-              ranker=DEFAULT_RANKER, delay=0.4, progress=None, resume=None,
-              verification_wait=180):
-    if not 0.1 <= delay <= 60 or not 0 <= verification_wait <= 1800:
-        raise ValueError("抓取间隔应为 0.1–60 秒，验证等待应为 0–1800 秒")
+              ranker=DEFAULT_RANKER, delay=None, progress=None, resume=None,
+              verification_wait=600, pdd_details=None):
     report = None
     if resume:
         if initialize or selector is not None:
@@ -35,7 +33,15 @@ def sync_jobs(sources=None, state_path=DEFAULT_STATE, cache=DEFAULT_CACHE,
         if sources and not set(sources) <= set(config["sources"]):
             raise ValueError("恢复来源不属于原运行")
         sources = sources or config["sources"]
-        selector, ranker, delay = report["selector"], report["ranker"], config["delay"]
+        selector, ranker = report["selector"], report["ranker"]
+        delay = config["delay"] if delay is None else delay
+        pdd_details = config.get("pdd_details", "full") if pdd_details is None else pdd_details
+    delay = 0.4 if delay is None else delay
+    pdd_details = "defer" if pdd_details is None else pdd_details
+    if pdd_details not in ("defer", "full"):
+        raise ValueError("PDD 详情模式必须为 defer 或 full")
+    if not 0.1 <= delay <= 60 or not 0 <= verification_wait <= 1800:
+        raise ValueError("抓取间隔应为 0.1–60 秒，验证等待应为 0–1800 秒")
     sources = list(dict.fromkeys(sources if sources is not None else
                                 [s["id"] for s in list_sources()]))
     for source in sources:
@@ -77,14 +83,18 @@ def sync_jobs(sources=None, state_path=DEFAULT_STATE, cache=DEFAULT_CACHE,
             report = {"version": 2, "started_at": started.isoformat(), "seeded": seeded,
                       "selector": selector, "ranker": ranker, "sources": {},
                       "config": {"state": str(state_path.resolve()), "cache": str(Path(cache).resolve()),
-                                 "sources": sources, "delay": delay},
+                                 "sources": sources, "delay": delay, "pdd_details": pdd_details},
                       "report_path": str(run_path / "report.json")}
         else:
             report["resumed_at"] = datetime.now(timezone.utc).isoformat()
+            report["config"]["delay"] = delay
+            report["config"]["pdd_details"] = pdd_details
             report.pop("finished_at", None)
         save_cache(report, run_path / "report.json")
         for source in sources:
-            if report["sources"].get(source, {}).get("status") == "ok":
+            prior = report["sources"].get(source, {})
+            filling_pending = source == "pinduoduo" and pdd_details == "full" and prior.get("pending_detail_count", 0)
+            if prior.get("status") == "ok" and not filling_pending:
                 continue
             old = state["sources"][source]
             seen = set(old["seen_ids"])
@@ -112,7 +122,8 @@ def sync_jobs(sources=None, state_path=DEFAULT_STATE, cache=DEFAULT_CACHE,
                 snapshot, acquisition, changed = collect_incremental(source,
                     previous, checkpoint, state_path.parent / "details", crawl,
                     delay=delay, progress=(lambda p, s=source: progress(s, p)) if progress else None,
-                    on_verification=verification_status, verification_wait=verification_wait)
+                    on_verification=verification_status, verification_wait=verification_wait,
+                    defer_details=source == "pinduoduo" and pdd_details == "defer")
                 if not snapshot["complete"]:
                     raise RuntimeError("抓取未完成，保留旧缓存和历史")
                 discovered = {}
@@ -127,6 +138,8 @@ def sync_jobs(sources=None, state_path=DEFAULT_STATE, cache=DEFAULT_CACHE,
                 result = {"status": "ok", "new_count": len(discovered), "exported_count": len(jobs),
                           "updated_count": sum(j in seen for j in changed), "updated_exported_count": len(updated_jobs),
                           "acquisition": acquisition, "checkpoint": str(checkpoint),
+                          "details_complete": snapshot.get("details_complete", True),
+                          "pending_detail_count": snapshot.get("pending_detail_count", 0),
                           "collected": snapshot["collected"], "fetched_at": snapshot["fetched_at"],
                           "json": str(run_path / f"{source}-new.json"),
                           "csv": str(run_path / f"{source}-new.csv"),

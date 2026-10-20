@@ -109,7 +109,8 @@ def select_jobs(jobs, selector):
     s = validate_selector(selector)
     selected = []
     for job in jobs:
-        if s["locations"] and not any(fold(city.removesuffix("市")) == fold(place.removesuffix("市"))
+        if s["locations"] and not any(fold(city.removesuffix("市")) in (
+                                      fold(place.removesuffix("市")), fold(place.split("·", 1)[0].removesuffix("市")))
                                       for city in s["locations"] for place in job["locations"]):
             continue
         exp, years = job["experience"], s["years"]

@@ -29,6 +29,7 @@ def crawl(max_pages=0, delay=0.4, progress=None, fetch=None, source="baidu"):
         raise ValueError("max_pages 必须是 0–1000 的整数（0 为全量）")
     if not 0.1 <= delay <= 60:
         raise ValueError("抓取间隔必须为 0.1–60 秒")
+    delay = max(delay, getattr(adapter, "minimum_delay", 0))
     # Browser adapters share one ordinary browser session across pages, closed on failure too.
     session = adapter.session() if fetch is None and hasattr(adapter, "session") else nullcontext()
     with session:
@@ -66,10 +67,12 @@ def _crawl_pages(adapter, fetch, max_pages, delay, progress):
             raise RuntimeError("超过 1000 页，停止抓取；保留旧缓存")
         time.sleep(delay)
         page += 1
-    return {"source_id": adapter.id, "source_name": adapter.name, "source_url": adapter.url, "fetched_at": datetime.now(timezone.utc).isoformat(),
+    pending = sum(bool(job.get("details_pending")) for job in jobs)
+    return {**getattr(adapter, "snapshot_metadata", {}),
+            "source_id": adapter.id, "source_name": adapter.name, "source_url": adapter.url, "fetched_at": datetime.now(timezone.utc).isoformat(),
             "reported_total": total, "collected": len(jobs), "pages": page,
             "scanned": scanned, "duplicates": scanned - len(jobs),
-            "complete": complete, "jobs": jobs}
+            "complete": complete, "jobs": jobs, "pending_detail_count": pending, "details_complete": not pending}
 
 
 def save_cache(snapshot, path=DEFAULT_CACHE):
@@ -101,7 +104,7 @@ def load_cache(path=DEFAULT_CACHE, source="baidu"):
 def export_csv(jobs):
     stream = io.StringIO(newline="")
     fields = ["title", "source", "company", "locations", "experience_min", "experience_max", "experience_evidence",
-              "technologies", "department", "category", "published_at", "updated_at", "url", "requirements", "description"]
+              "technologies", "department", "category", "published_at", "updated_at", "url", "requirements", "description", "details_pending"]
     writer = csv.DictWriter(stream, fieldnames=fields)
     writer.writeheader()
     for job in jobs:

@@ -1,7 +1,10 @@
 import json
 import tempfile
 import threading
+import time
 import unittest
+from contextlib import contextmanager
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -70,6 +73,13 @@ class SelectorTests(unittest.TestCase):
             ("Python", "熟悉PYTHON开发", True), ("nodejs", "Node.js", True)]:
             self.assertEqual(tech_matches(term, text), expected)
 
+    def test_city_filter_matches_hierarchical_address_without_substring_false_positive(self):
+        item = {**self.jobs[0], "locations": ["上海·浦东新区·张江"]}
+        for city in ("上海", "上海市", "上海·浦东新区·张江"):
+            self.assertEqual(len(select_jobs([item], {"locations": [city]})), 1)
+        for city in ("海", "北京"):
+            self.assertEqual(select_jobs([item], {"locations": [city]}), [])
+
     def test_validation(self):
         for invalid in [{"years": -1}, {"years": True}, {"years": float("nan")},
                         {"locations": "北京"}, {"keywords": [""]}, {"typo": 1},
@@ -128,11 +138,42 @@ class CrawlerTests(unittest.TestCase):
 
 
 class ServerTests(unittest.TestCase):
+    def pdd_adapter(self, events):
+        adapter = SimpleNamespace(id="pinduoduo", name="PDD", _context=None, _browser=None)
+        @contextmanager
+        def session():
+            events.append(("open", threading.get_ident()))
+            adapter._context = object()
+            try:
+                yield
+            finally:
+                adapter._context = None
+                events.append(("close", threading.get_ident()))
+        adapter.session = session
+        return adapter
+
+    def refresh_pdd(self):
+        request = Request(self.url + "/api/crawl", data=b'{"source":"pinduoduo"}',
+                          headers={"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            self.assertEqual(response.status, 202)
+        deadline = time.monotonic() + 3
+        while True:
+            with urlopen(self.url + "/api/status") as response:
+                status = json.load(response)
+            if not status["running"]:
+                return status
+            if time.monotonic() >= deadline:
+                self.fail("刷新任务未结束")
+            threading.Event().wait(0.01)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.cache = Path(self.directory.name) / "jobs.json"
         save_cache(crawl(max_pages=1, fetch=CrawlerTests().fetch), self.cache)
-        self.server = make_server(port=0, cache=self.cache)
+        self.pdd_stop = threading.Event()
+        with patch("jobcrawler.server.Event", return_value=self.pdd_stop):
+            self.server = make_server(port=0, cache=self.cache)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = f"http://127.0.0.1:{self.server.server_port}"
@@ -167,6 +208,82 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(before, self.cache.read_bytes())
         with urlopen(self.url + "/api/status") as response:
             self.assertEqual(json.load(response)["error"], "upstream unavailable")
+
+    def test_pdd_full_refresh_uses_list_first_sync_instead_of_full_detail_crawl(self):
+        result = {"sources": {"pinduoduo": {"status": "ok"}}, "report_path": "test-report.json"}
+        with patch("jobcrawler.server.get_source", return_value=self.pdd_adapter([])), \
+                patch("jobcrawler.server.sync_jobs", return_value=result) as sync, patch("jobcrawler.server.crawl") as crawl:
+            status = self.refresh_pdd()
+        self.assertEqual(status["report_path"], "test-report.json")
+        self.assertEqual(sync.call_args.kwargs["pdd_details"], "defer")
+        self.assertEqual(sync.call_args.kwargs["sources"], ["pinduoduo"])
+        self.assertEqual(sync.call_args.kwargs["delay"], 6)
+        crawl.assert_not_called()
+
+    def test_pdd_refreshes_share_owner_thread_and_close_session_at_shutdown(self):
+        events, threads = [], []
+        adapter = self.pdd_adapter(events)
+        def sync(**kwargs):
+            threads.append(threading.get_ident())
+            return {"sources": {"pinduoduo": {"status": "ok"}}, "report_path": "test-report.json"}
+        with patch("jobcrawler.server.get_source", return_value=adapter), patch("jobcrawler.server.sync_jobs", side_effect=sync), \
+                patch("jobcrawler.server.monotonic", return_value=100), patch.object(self.pdd_stop, "wait", return_value=False) as wait:
+            self.assertIsNone(self.refresh_pdd()["error"])
+            self.assertIsNone(self.refresh_pdd()["error"])
+            self.assertEqual(len(events), 1)
+            self.assertEqual(threads, [events[0][1], events[0][1]])
+            wait.assert_called_once_with(120)
+            self.server.shutdown()
+            self.server.server_close()
+            self.assertEqual([event[0] for event in events], ["open", "close"])
+
+    def test_pdd_does_not_add_cooldown_after_enough_idle_time(self):
+        result = {"sources": {"pinduoduo": {"status": "ok"}}, "report_path": "test-report.json"}
+        with patch("jobcrawler.server.get_source", return_value=self.pdd_adapter([])), \
+                patch("jobcrawler.server.sync_jobs", return_value=result), \
+                patch("jobcrawler.server.monotonic", side_effect=[100, 100, 221, 221]), \
+                patch.object(self.pdd_stop, "wait", return_value=False) as wait:
+            self.assertIsNone(self.refresh_pdd()["error"])
+            self.assertIsNone(self.refresh_pdd()["error"])
+            wait.assert_not_called()
+
+    def test_pdd_failed_refresh_also_cools_down_without_reopening_session(self):
+        events = []
+        results = [{"sources": {"pinduoduo": {"status": "paused", "error": "manual verification"}},
+                    "report_path": "paused-report.json"},
+                   {"sources": {"pinduoduo": {"status": "ok"}}, "report_path": "test-report.json"}]
+        with patch("jobcrawler.server.get_source", return_value=self.pdd_adapter(events)), \
+                patch("jobcrawler.server.sync_jobs", side_effect=results), \
+                patch("jobcrawler.server.monotonic", return_value=100), \
+                patch.object(self.pdd_stop, "wait", return_value=False) as wait:
+            self.assertEqual(self.refresh_pdd()["error"], "manual verification")
+            self.assertIsNone(self.refresh_pdd()["error"])
+            wait.assert_called_once_with(120)
+            self.assertEqual([event[0] for event in events], ["open"])
+
+    def test_pdd_shutdown_interrupts_cooldown_without_starting_another_refresh(self):
+        events = []
+        result = {"sources": {"pinduoduo": {"status": "ok"}}, "report_path": "test-report.json"}
+        with patch("jobcrawler.server.get_source", return_value=self.pdd_adapter(events)), \
+                patch("jobcrawler.server.sync_jobs", return_value=result) as sync:
+            self.assertIsNone(self.refresh_pdd()["error"])
+            request = Request(self.url + "/api/crawl", data=b'{"source":"pinduoduo"}',
+                              headers={"Content-Type": "application/json"})
+            with urlopen(request) as response:
+                self.assertEqual(response.status, 202)
+            deadline = time.monotonic() + 3
+            while True:
+                with urlopen(self.url + "/api/status") as response:
+                    status = json.load(response)
+                if (status.get("progress") or {}).get("phase") == "cooldown" or time.monotonic() >= deadline:
+                    break
+                threading.Event().wait(0.01)
+            self.assertEqual(status["progress"]["phase"], "cooldown")
+            self.assertGreater(status["progress"]["seconds"], 110)
+            self.server.shutdown()
+            self.server.server_close()
+            self.assertEqual(sync.call_count, 1)
+            self.assertEqual([event[0] for event in events], ["open", "close"])
 
 
 if __name__ == "__main__":

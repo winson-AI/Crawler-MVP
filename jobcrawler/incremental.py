@@ -24,8 +24,10 @@ def content_hash(job):
 
 
 def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.4,
-                        progress=None, on_verification=None, verification_wait=180):
+                        progress=None, on_verification=None, verification_wait=180,
+                        defer_details=False):
     adapter = get_source(source)
+    delay = max(delay, getattr(adapter, "minimum_delay", 0))
     split = callable(getattr(adapter, "fetch_list_page", None)) and callable(getattr(adapter, "fetch_job_detail", None))
     directory, details = Path(directory), Path(details) / source
     directory.mkdir(parents=True, exist_ok=True)
@@ -35,13 +37,24 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
     else:
         save_cache(previous, before_path)
     stats = {"listing_network_pages": 0, "listing_cache_pages": 0, "listing_replayed_pages": 0,
-             "listing_restarts": 0, "detail_requests": 0, "detail_cache_hits": 0, "legacy_cache_hits": 0, "embedded_details": 0}
+             "listing_restarts": 0, "detail_requests": 0, "detail_cache_hits": 0, "legacy_cache_hits": 0,
+             "embedded_details": 0, "request_delay": delay, "details_deferred": 0, "listing_setup_requests": 0,
+             "listing_page_reused": False, "verification_handoffs": 0, "verification_cleared": 0}
     previous_jobs = {str(j["id"]): j for j in previous["jobs"]}
     callback_before = getattr(adapter, "verification_callback", None)
     timeout_before = getattr(adapter, "verification_timeout", 180)
+    waiting_for_human = False
 
     def verification(page, endpoint, operation, status):
-        evidence = record_verification(page, directory, source, endpoint, operation, status)
+        nonlocal waiting_for_human
+        if status == "needs_human" and not waiting_for_human:
+            stats["verification_handoffs"] += 1
+            waiting_for_human = True
+        elif status == "cleared":
+            stats["verification_cleared"] += 1
+            waiting_for_human = False
+        stats["listing_page_reused"] = getattr(adapter, "listing_page_reused", False)
+        evidence = record_verification(page, directory, source, endpoint, operation, status, acquisition=stats)
         if on_verification:
             on_verification(status, evidence, dict(stats))
         if progress:
@@ -85,7 +98,12 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                         stats["listing_cache_pages"] += 1
                         return JobPage(page, cached["total"], cached["jobs"], cached["has_more"])
                     ensure_session()
-                    result = adapter.fetch_list_page(page) if split else adapter.fetch_page(page)
+                    setup_before = getattr(adapter, "listing_setup_requests", 0)
+                    try:
+                        result = adapter.fetch_list_page(page) if split else adapter.fetch_page(page)
+                    finally:
+                        stats["listing_setup_requests"] += getattr(adapter, "listing_setup_requests", 0) - setup_before
+                        stats["listing_page_reused"] = getattr(adapter, "listing_page_reused", False)
                     stats["listing_network_pages"] += 1
                     stats["listing_replayed_pages"] += int(replay)
                     save_cache({"source_id": source, "page": result.page, "total": result.total,
@@ -124,10 +142,15 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                         # Bootstrap older full snapshots without re-fetching unchanged
                         # details. Only compare fields actually present in the list.
                         fields = [k for k in LIST_FIELDS if summary.get(k)]
-                        unchanged_legacy = old and digest({k: old.get(k) for k in fields}) == digest({k: summary.get(k) for k in fields})
+                        unchanged_legacy = old and not old.get("details_pending") and digest({k: old.get(k) for k in fields}) == digest({k: summary.get(k) for k in fields})
                         if not entry and unchanged_legacy:
                             job = old
                             stats["legacy_cache_hits"] += 1
+                        elif defer_details:
+                            cached = entry["job"] if entry else old
+                            job = {**(cached or summary), **{k: summary[k] for k in LIST_FIELDS if k in summary},
+                                   "details_pending": True}
+                            stats["details_deferred"] += 1
                         else:
                             ensure_session()
                             if stats["detail_requests"]:
@@ -136,7 +159,8 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                             job = adapter.fetch_job_detail(summary)
                         if job["source"] != source or str(job["id"]) != job_id:
                             raise ValueError("详情 ID 与列表不一致")
-                        save_cache({"source_id": source, "listing_hash": signature, "job": job}, path)
+                        if not job.get("details_pending"):
+                            save_cache({"source_id": source, "listing_hash": signature, "job": job}, path)
                     if old is None and entry:
                         old = entry["job"]
                 else:
@@ -147,8 +171,11 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                 jobs.append(job)
                 if progress:
                     progress({"phase": "details", "completed": index + 1, "total": len(listing["jobs"]), **stats})
+            pending = sum(bool(job.get("details_pending")) for job in jobs)
             result = {**listing, "jobs": jobs, "listing_fetched_at": listing["fetched_at"],
-                      "fetched_at": datetime.now(timezone.utc).isoformat()}
+                      "fetched_at": datetime.now(timezone.utc).isoformat(),
+                      "details_complete": not pending,
+                      "pending_detail_count": pending}
             result.pop("split_details", None)
             return result, stats, updated
         except Exception as exc:

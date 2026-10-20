@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "captured_at": "2026-10-20",
+  "note": "从浏览器实时读取的最小字段投影，仅作模板回归；不自动导入职位库，不包含完整职责文本。",
+  "examples": [
+    {
+      "template_id": "ashby",
+      "url": "https://jobs.ashbyhq.com/Ashby",
+      "document_url": "https://api.ashbyhq.com/posting-api/job-board/Ashby",
+      "acquisition": "live_browser_public_api_document",
+      "sample_kind": "public_posting",
+      "document": {"jobs":[{"id":"7458d4e9-da2e-47bd-98cb-adfda43d42b2","title":"Engineering Manager - EU","jobUrl":"https://jobs.ashbyhq.com/Ashby/7458d4e9-da2e-47bd-98cb-adfda43d42b2","location":"Remote - European Union","publishedAt":"2024-03-04T14:29:08.532+00:00","department":"Engineering","isListed":true}]}
+    },
+    {
+      "template_id": "lever",
+      "url": "https://jobs.lever.co/leverdemo",
+      "document_url": "https://api.lever.co/v0/postings/leverdemo?mode=json",
+      "acquisition": "live_browser_public_api_document",
+      "sample_kind": "official_demo_not_real_openings",
+      "document": [{"id":"ad208490-4052-4f91-a57e-433f2d1e484b","text":"Customer Success Manager","hostedUrl":"https://jobs.lever.co/leverdemo/ad208490-4052-4f91-a57e-433f2d1e484b","categories":{"commitment":"Regular Full Time (Salary)","department":"Customer Success","location":"Atlanta, Georgia","team":"Customer Success Team","allLocations":["Atlanta, Georgia"]}}]
+    }
+  ]
+}

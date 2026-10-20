@@ -9,13 +9,14 @@ from .selectors import select_jobs
 from .server import make_server
 from .sources import list_sources
 from .sync import DEFAULT_OUTPUT, DEFAULT_STATE, sync_jobs
-from .verification import record_visual_review
+from .verification import ai_visual_review, record_visual_review
 
 
 def sync_progress(source, progress):
     phase = progress["phase"]
     if phase == "verification":
-        print(f"{source} Browser Agent：{progress['status']} · 验证证据 {progress['evidence']}；交互验证码请在原窗口手动完成", file=sys.stderr, flush=True)
+        action = "验证已通过，继续抓取" if progress["status"] == "cleared" else "请在抓取程序的原窗口手动完成验证"
+        print(f"{source} Browser Agent：{progress['status']} · 验证证据 {progress['evidence']}；{action}", file=sys.stderr, flush=True)
     elif phase == "list" and (progress["page"] == 1 or progress["page"] % 20 == 0):
         print(f"{source} 列表第 {progress['page']} 页 · {progress['collected']}/{progress['reported_total']}", file=sys.stderr, flush=True)
     elif phase == "details" and (progress["completed"] == 1 or progress["completed"] % 100 == 0 or progress["completed"] == progress["total"]):
@@ -29,6 +30,9 @@ def main():
     review_parser = sub.add_parser("verification-review", help="记录 Codex 对验证截图的页面状态分类，不解题或代填")
     review_parser.add_argument("--evidence", type=Path, required=True)
     review_parser.add_argument("--state", choices=["ready", "needs_human", "unknown"], required=True)
+    ai_review_parser = sub.add_parser("verification-ai-review", help="用视觉模型分类验证弹窗，不解题或代填")
+    ai_review_parser.add_argument("--evidence", type=Path, required=True)
+    ai_review_parser.add_argument("--model")
     sync_parser = sub.add_parser("sync", help="先对比列表，只补抓新增或更新的详情，支持断点恢复")
     sync_parser.add_argument("--sources", nargs="+", choices=[s["id"] for s in list_sources()])
     sync_parser.add_argument("--initialize", action="store_true", help="仅用现有缓存建立去重基线，不抓取")
@@ -37,9 +41,10 @@ def main():
     sync_parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     sync_parser.add_argument("--selector", type=Path)
     sync_parser.add_argument("--ranker", choices=RANKERS, default=DEFAULT_RANKER)
-    sync_parser.add_argument("--delay", type=float, default=0.4)
+    sync_parser.add_argument("--delay", type=float, help="请求间隔秒数；新运行默认 0.4，恢复时默认沿用原值，可显式覆盖")
     sync_parser.add_argument("--resume", type=Path, help="恢复某次运行目录中的未完成来源")
-    sync_parser.add_argument("--verification-wait", type=float, default=180, help="等待人工验证的秒数；超时后保存暂停状态")
+    sync_parser.add_argument("--verification-wait", type=float, default=600, help="等待人工验证的秒数（默认 600）；超时后保存暂停状态")
+    sync_parser.add_argument("--pdd-details", choices=["defer", "full"], help="PDD 详情：新运行默认 defer，只更新列表并复用详情缓存；full 补抓待处理详情。恢复默认沿用原模式")
     crawl_parser = sub.add_parser("crawl", help="抓取公开职位并缓存")
     crawl_parser.add_argument("--max-pages", type=int, default=0, help="0=全量")
     crawl_parser.add_argument("--delay", type=float, default=0.4)
@@ -60,12 +65,15 @@ def main():
     try:
         if args.command == "verification-review":
             print(json.dumps(record_visual_review(args.evidence, args.state), ensure_ascii=False, indent=2))
+        elif args.command == "verification-ai-review":
+            print(json.dumps(ai_visual_review(args.evidence, model=args.model), ensure_ascii=False, indent=2))
         elif args.command == "sync":
             selector = json.loads(args.selector.read_text(encoding="utf-8")) if args.selector else None
             report = sync_jobs(sources=args.sources, state_path=args.state, cache=args.cache,
                 output=args.output, initialize=args.initialize, selector=selector,
                 ranker=args.ranker, delay=args.delay, resume=args.resume,
-                verification_wait=args.verification_wait, progress=sync_progress)
+                verification_wait=args.verification_wait, progress=sync_progress,
+                pdd_details=args.pdd_details)
             print(json.dumps(report, ensure_ascii=False, indent=2))
             if report.get("failed_sources"):
                 return 1

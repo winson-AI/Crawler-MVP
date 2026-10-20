@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "researched_at": "2026-10-20",
+  "templates": [
+    {"id":"baidu","name":"百度招聘","hosts":["talent.baidu.com"],"kind":"builtin","source":"baidu","reference":"https://talent.baidu.com/jobs/social-list"},
+    {"id":"alibaba","name":"阿里巴巴招聘","hosts":["talent.alibaba.com"],"kind":"builtin","source":"alibaba","reference":"https://talent.alibaba.com/"},
+    {"id":"tencent","name":"腾讯招聘","hosts":["careers.tencent.com"],"kind":"builtin","source":"tencent","reference":"https://careers.tencent.com/search.html"},
+    {"id":"meituan","name":"美团招聘","hosts":["hr.meituan.com"],"kind":"builtin","source":"meituan","reference":"https://hr.meituan.com/web/social"},
+    {"id":"bytedance","name":"字节跳动招聘","hosts":["jobs.bytedance.com"],"kind":"builtin","source":"bytedance","reference":"https://jobs.bytedance.com/experienced/position"},
+    {"id":"jd","name":"京东招聘","hosts":["zhaopin.jd.com"],"kind":"builtin","source":"jd","reference":"https://zhaopin.jd.com/web/job/job_info_list/3"},
+    {"id":"pinduoduo","name":"拼多多招聘","hosts":["careers.pddglobalhr.com"],"kind":"builtin","source":"pinduoduo","reference":"https://careers.pddglobalhr.com/jobs"},
+    {"id":"greenhouse","name":"Greenhouse 企业职位板","hosts":["boards.greenhouse.io","job-boards.greenhouse.io","boards-api.greenhouse.io"],"kind":"public_api","reference":"https://docs.greenhouse.io/job-board","parser":"json","items":"jobs","fields":{"id":"id","title":"title","url":"absolute_url","locations":"location.name","description":"content","department":"departments.0.name","updated_at":"updated_at"}},
+    {"id":"lever","name":"Lever 企业职位板（含 EU）","hosts":["jobs.lever.co","jobs.eu.lever.co","api.lever.co","api.eu.lever.co"],"kind":"public_api","reference":"https://github.com/lever/postings-api","parser":"json","items":"","fields":{"id":"id","title":"text","url":"hostedUrl","locations":["categories.location","categories.allLocations"],"department":"categories.department","description":["descriptionPlain","lists.*.text","lists.*.content","additionalPlain"],"published_at":"createdAt"}},
+    {"id":"ashby","name":"Ashby 企业职位板","hosts":["jobs.ashbyhq.com","api.ashbyhq.com"],"kind":"public_api","reference":"https://developers.ashbyhq.com/docs/public-job-posting-api","parser":"json","items":"jobs","fields":{"id":"id","title":"title","url":"jobUrl","locations":["location","secondaryLocations.*.location"],"description":"descriptionPlain","department":"department","published_at":"publishedAt"}},
+    {"id":"lagou_campus","name":"拉勾校招公开首页","hosts":["campus.lagou.com"],"kind":"public_dom","reference":"https://campus.lagou.com/","parser":"dom","items":".job-item","fields":{"title":".job-name","url":"a.job-link","company":".company-link .title","locations":"a.job-link .experience span:first-child"}},
+    {"id":"51job_campus","name":"前程无忧·亚信2027校招","hosts":["campus.51job.com"],"kind":"public_browser_dom","reference":"https://campus.51job.com/asiainfo/jobs.html","paths":["/asiainfo/jobs.html"],"company":"亚信","parser":"dom","items":"#jobs > li:has(.joblist)","fields":{"title":".jobname","url":"a.jump","locations":".joblist > li:nth-child(2)","category":".joblist > li:nth-child(3)","published_at":".joblist > li:nth-child(4)"}},
+    {"id":"boss","name":"BOSS直聘","hosts":["zhipin.com","bosszhipin.com"],"subdomains":true,"kind":"public_dom","reference":"https://www.zhipin.com/","parser":"dom","items":".sub-li","fields":{"title":".job-info .name","url":"a.job-info","company":".user-info .name","locations":".job-text span:first-child","work_years":".job-text span:nth-child(2)"}},
+    {"id":"zhaopin","name":"智联招聘","hosts":["zhaopin.com"],"subdomains":true,"kind":"public_dom","reference":"https://www.zhaopin.com/","parser":"dom","items":".featured-jobs-card","fields":{"title":".featured-jobs-card__title","url":"a.featured-jobs-card__title","company":".featured-jobs-card__company"}},
+    {"id":"51job","name":"前程无忧","hosts":["51job.com"],"subdomains":true,"kind":"document_probe","reference":"https://www.51job.com/"},
+    {"id":"liepin","name":"猎聘","hosts":["liepin.com"],"subdomains":true,"kind":"public_dom","reference":"https://www.liepin.com/","parser":"dom","items":".seo-jobcard2-common","fields":{"title":".jobcard2-title","url":"a.jobcard2-detail-box","company":".jobcard2-company-title","locations":".jobcard2-location","work_years":".jobcard2-detail-labels span:first-child"}},
+    {"id":"lagou","name":"拉勾","hosts":["lagou.com"],"subdomains":true,"kind":"browser_dom","reference":"https://www.lagou.com/wn/","paths":["/","/wn/"],"parser":"dom","items":"[class*=\"positionItem__\"]","fields":{"title":{"selector":"a[href*=\"/wn/jobs/\"]","attr":"title"},"url":"a[href*=\"/wn/jobs/\"]","company":"a[href*=\"/gongsi/\"]","work_years":"a[href*=\"/wn/jobs/\"]"}},
+    {"id":"linkedin","name":"LinkedIn Jobs","hosts":["linkedin.com"],"subdomains":true,"kind":"document_probe","reference":"https://www.linkedin.com/jobs/"},
+    {"id":"indeed","name":"Indeed","hosts":["indeed.com"],"subdomains":true,"kind":"document_probe","reference":"https://www.indeed.com/"},
+    {"id":"glassdoor","name":"Glassdoor","hosts":["glassdoor.com"],"subdomains":true,"kind":"document_probe","reference":"https://www.glassdoor.com/Job/"},
+    {"id":"dice","name":"Dice","hosts":["dice.com"],"subdomains":true,"kind":"document_probe","reference":"https://www.dice.com/"},
+    {"id":"schema","name":"通用 JobPosting / JSON-LD","hosts":[],"kind":"generic","reference":"https://schema.org/JobPosting"},
+    {"id":"json","name":"通用 JSON / 内嵌 JSON 职位文档","hosts":[],"kind":"generic","reference":"https://schema.org/JobPosting"},
+    {"id":"dom","name":"通用 DOM 职位卡片","hosts":[],"kind":"generic","reference":"https://schema.org/JobPosting"}
+  ]
+}

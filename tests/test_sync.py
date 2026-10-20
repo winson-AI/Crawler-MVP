@@ -119,3 +119,24 @@ class SyncTests(unittest.TestCase):
             result = self.run_sync(sources=["tencent"])
         self.assertEqual(result["seeded"], {"tencent": 1})
         self.assertEqual(result["new_count"], 1)
+
+    def test_resume_inherits_delay_until_explicitly_overridden(self):
+        with patch("jobcrawler.sync.crawl", side_effect=RuntimeError("temporary failure")):
+            failed = self.run_sync(sources=["baidu"], delay=0.7)
+            run = Path(failed["report_path"]).parent
+            inherited = self.run_sync(resume=run)
+        self.assertEqual(inherited["config"]["delay"], 0.7)
+        with patch("jobcrawler.sync.crawl", return_value=snapshot("baidu", ["1"])) as fetch:
+            resumed = self.run_sync(resume=run, delay=3)
+        self.assertEqual(resumed["config"]["delay"], 3)
+        self.assertEqual(fetch.call_args.kwargs["delay"], 3)
+        self.assertEqual(resumed["sources"]["baidu"]["status"], "ok")
+
+    def test_resume_rejects_invalid_delay_without_rewriting_report(self):
+        with patch("jobcrawler.sync.crawl", side_effect=RuntimeError("temporary failure")):
+            failed = self.run_sync(sources=["baidu"])
+        report = Path(failed["report_path"])
+        before = report.read_bytes()
+        with self.assertRaisesRegex(ValueError, "抓取间隔"):
+            self.run_sync(resume=report.parent, delay=0)
+        self.assertEqual(report.read_bytes(), before)

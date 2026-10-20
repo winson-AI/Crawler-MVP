@@ -11,7 +11,7 @@ from jobcrawler.models import build_job
 from jobcrawler.sources.base import JobPage
 from jobcrawler.sources.pinduoduo import PinduoduoSource
 from jobcrawler.sync import sync_jobs
-from jobcrawler.verification import VerificationRequired, record_verification, record_visual_review
+from jobcrawler.verification import VerificationRequired, ai_visual_review, record_verification, record_visual_review
 
 
 def job(job_id, updated="2026-10-18", requirements="3-5年Python经验"):
@@ -96,6 +96,88 @@ class IncrementalTests(unittest.TestCase):
         self.assertEqual(resumed["new_count"], 3)
         self.assertEqual(self.adapter.list_calls, [1, 2, 2])
         self.assertEqual(resumed["sources"]["tencent"]["acquisition"]["listing_cache_pages"], 1)
+
+    def test_source_minimum_delay_applies_to_lists_and_details(self):
+        self.adapter.minimum_delay = 3
+        with patch("jobcrawler.incremental.time.sleep") as wait:
+            result = self.run_sync()
+        self.assertEqual([call.args[0] for call in wait.call_args_list], [3, 3, 3])
+        self.assertEqual(result["sources"]["tencent"]["acquisition"]["request_delay"], 3)
+        self.assertEqual(self.adapter.detail_calls, ["1", "2", "3"])
+
+    def test_reused_session_does_not_recount_previous_setup_requests(self):
+        self.adapter.listing_setup_requests = 1
+        self.adapter.listing_page_reused = True
+        result = self.run_sync()["sources"]["tencent"]
+        self.assertEqual(result["acquisition"]["listing_setup_requests"], 0)
+        self.assertTrue(result["acquisition"]["listing_page_reused"])
+
+    def test_duplicate_timeout_notification_counts_one_human_handoff(self):
+        def pause(summary):
+            for _ in range(2):
+                self.adapter.verification_callback(MagicMock(), "/detail", {"code": summary["id"]}, "needs_human")
+            raise VerificationRequired("waiting for human")
+        with patch.object(self.adapter, "fetch_job_detail", side_effect=pause):
+            result = self.run_sync()["sources"]["tencent"]
+        self.assertEqual(result["status"], "paused")
+        self.assertEqual(result["acquisition"]["verification_handoffs"], 1)
+        events = [json.loads(line) for line in (Path(result["checkpoint"]) / "verification-events.jsonl").read_text().splitlines()]
+        self.assertEqual(len(events), 2)
+        self.assertTrue(all(event["acquisition"]["verification_handoffs"] == 1 for event in events))
+
+    def test_pdd_defaults_to_deferred_details_and_can_fill_same_checkpoint(self):
+        self.adapter.id = "pinduoduo"
+        self.adapter.jobs = [{**item, "source": "pinduoduo"} for item in self.adapter.jobs]
+        kwargs = dict(sources=["pinduoduo"], cache=self.cache, state_path=self.state,
+                      output=self.root / "output", delay=0.1)
+        deferred = sync_jobs(**kwargs)
+        self.assertEqual(self.adapter.detail_calls, [])
+        result = deferred["sources"]["pinduoduo"]
+        self.assertEqual(result["pending_detail_count"], 3)
+        self.assertFalse(result["details_complete"])
+        partial = load_cache(cache_path("pinduoduo", self.cache), "pinduoduo")
+        self.assertTrue(partial["complete"])
+        self.assertTrue(all(item["details_pending"] for item in partial["jobs"]))
+        self.assertEqual(list((self.state.parent / "details").rglob("*.json")), [])
+        calls = self.adapter.list_calls[:]
+        filled = sync_jobs(resume=Path(deferred["report_path"]).parent, pdd_details="full")
+        self.assertEqual(self.adapter.list_calls, calls)
+        self.assertEqual(self.adapter.detail_calls, ["1", "2", "3"])
+        self.assertEqual(filled["sources"]["pinduoduo"]["pending_detail_count"], 0)
+        self.assertTrue(filled["sources"]["pinduoduo"]["details_complete"])
+
+    def test_deferred_pending_snapshot_is_not_bootstrapped_as_full_details(self):
+        self.adapter.id = "pinduoduo"
+        self.adapter.jobs = [{**item, "source": "pinduoduo"} for item in self.adapter.jobs]
+        kwargs = dict(sources=["pinduoduo"], cache=self.cache, state_path=self.state,
+                      output=self.root / "output", delay=0.1)
+        sync_jobs(**kwargs)
+        full = sync_jobs(**kwargs, pdd_details="full")
+        self.assertEqual(self.adapter.detail_calls, ["1", "2", "3"])
+        self.assertTrue(full["sources"]["pinduoduo"]["details_complete"])
+        self.assertEqual(full["new_count"], 0)
+
+    def test_deferred_changed_details_keep_old_text_without_advancing_detail_cache(self):
+        self.adapter.id = "pinduoduo"
+        self.adapter.jobs = [{**item, "source": "pinduoduo"} for item in self.adapter.jobs]
+        kwargs = dict(sources=["pinduoduo"], cache=self.cache, state_path=self.state,
+                      output=self.root / "output", delay=0.1)
+        sync_jobs(**kwargs, pdd_details="full")
+        self.adapter.detail_calls.clear()
+        detail = self.state.parent / "details" / "pinduoduo"
+        before = {p.name: p.read_bytes() for p in detail.glob("*.json")}
+        self.adapter.jobs[0] = {**self.adapter.jobs[0], "title": "新职位名称", "updated_at": "2026-10-20",
+                                "requirements": "5年以上Python经验"}
+        deferred = sync_jobs(**kwargs)
+        self.assertEqual(self.adapter.detail_calls, [])
+        saved = load_cache(cache_path("pinduoduo", self.cache), "pinduoduo")["jobs"][0]
+        self.assertEqual(saved["title"], "新职位名称")
+        self.assertEqual(saved["requirements"], "3-5年Python经验")
+        self.assertTrue(saved["details_pending"])
+        self.assertEqual(before, {p.name: p.read_bytes() for p in detail.glob("*.json")})
+        filled = sync_jobs(resume=Path(deferred["report_path"]).parent, pdd_details="full")
+        self.assertEqual(self.adapter.detail_calls, ["1"])
+        self.assertTrue(filled["sources"]["pinduoduo"]["details_complete"])
 
     def test_stuck_page_is_quarantined_and_retried_instead_of_reused_forever(self):
         fetch = self.adapter.fetch_list_page
@@ -236,6 +318,37 @@ class IncrementalTests(unittest.TestCase):
         self.assertEqual(record["browser_agent"]["page_url"], "https://careers.pddglobalhr.com/jobs/detail?code=one")
         self.assertFalse(record["browser_agent"]["may_solve_or_fill_captcha"])
         page.screenshot.assert_called_once()
+        journal = self.root / "verification-events.jsonl"
+        self.assertNotIn("do-not-persist", journal.read_text())
+        event = json.loads(journal.read_text())
+        self.assertNotIn("screenshot", event)
+
+    def test_verification_history_keeps_both_challenges_after_latest_state_is_cleared(self):
+        page = MagicMock()
+        page.url = "https://careers.pddglobalhr.com/jobs?verifyAuthToken=do-not-persist"
+        for number in (1, 10):
+            for status in ("needs_human", "cleared"):
+                path = record_verification(page, self.root, "pinduoduo", "/list", {"page": number}, status,
+                    acquisition={"request_delay": 6, "listing_page_reused": False, "detail_requests": 0,
+                                 "verifyAuthToken": "do-not-persist"})
+        self.assertEqual(json.loads(Path(path).read_text())["operation"], {"page": 10})
+        self.assertEqual(json.loads(Path(path).read_text())["status"], "cleared")
+        text = (self.root / "verification-events.jsonl").read_text()
+        events = [json.loads(line) for line in text.splitlines()]
+        self.assertEqual([(e["operation"]["page"], e["status"]) for e in events],
+                         [(1, "needs_human"), (1, "cleared"), (10, "needs_human"), (10, "cleared")])
+        self.assertTrue(all(e["acquisition"] == {"request_delay": 6, "listing_page_reused": False,
+                                               "detail_requests": 0} for e in events))
+        self.assertNotIn("do-not-persist", text)
+        self.assertTrue(all(e["observed_at"] for e in events))
+
+    def test_verification_history_is_still_written_when_screenshot_is_unavailable(self):
+        page = MagicMock()
+        page.screenshot.side_effect = RuntimeError("page unavailable")
+        path = record_verification(page, self.root, "pinduoduo", "/list", {"page": 1}, "unknown")
+        self.assertIsNone(json.loads(Path(path).read_text())["screenshot"])
+        events = [json.loads(line) for line in (self.root / "verification-events.jsonl").read_text().splitlines()]
+        self.assertEqual([e["status"] for e in events], ["unknown"])
 
     def test_browser_verification_resumes_only_on_real_success_not_visual_decision(self):
         source = PinduoduoSource()
@@ -249,7 +362,8 @@ class IncrementalTests(unittest.TestCase):
         page.expect_response.return_value.__enter__.return_value.value = final
         observer = MagicMock(return_value="visual-evidence.json")
         source.verification_callback = observer
-        result = source.read_response(page, first, "/detail")
+        with patch("jobcrawler.sources.pinduoduo.time.monotonic", side_effect=[0, 5, 5]):
+            result = source.read_response(page, first, "/detail")
         self.assertTrue(result["success"])
         self.assertEqual([c.args[-1] for c in observer.call_args_list], ["needs_human", "cleared"])
         page.bring_to_front.assert_called_once()
@@ -268,3 +382,17 @@ class IncrementalTests(unittest.TestCase):
         self.assertNotIn("answer", review)
         with self.assertRaises(ValueError):
             record_visual_review(evidence, "captcha-answer")
+
+    def test_ai_visual_review_classifies_popup_without_authorizing_resume(self):
+        image = self.root / "verification.png"
+        image.write_bytes(b"test-image-only")
+        evidence = self.root / "verification.json"
+        save_cache({"source": "pinduoduo", "status": "needs_human", "screenshot": str(image)}, evidence)
+        response = MagicMock()
+        response.read.return_value = b'{"output_text":"{\\"state\\":\\"needs_human\\"}"}'
+        response.__enter__.return_value = response
+        with patch("jobcrawler.verification.urlopen", return_value=response) as request:
+            review = ai_visual_review(evidence, api_key="test-key", endpoint="https://ai.test")
+        self.assertEqual(review["state"], "needs_human")
+        self.assertFalse(review["allows_resume_without_server_success"])
+        self.assertEqual(request.call_args.args[0].full_url, "https://ai.test")

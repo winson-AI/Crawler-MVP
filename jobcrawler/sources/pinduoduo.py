@@ -1,4 +1,5 @@
 import time
+from contextlib import contextmanager
 from urllib.parse import urlencode, urlsplit
 
 from ..models import build_job
@@ -25,11 +26,26 @@ class PinduoduoSource(BrowserSource):
     verification_timeout = 180
     verification_callback = None
     requires_listing_replay = True
+    minimum_delay = 3
+    page_size = 50
+    listing_setup_requests = 0
+    listing_page_reused = False
+
+    @contextmanager
+    def session(self):
+        # A server worker may own the browser across several complete refreshes.
+        if self._context is not None:
+            yield
+        else:
+            with super().session():
+                yield
 
     def launch_browser(self, playwright):
         # The public site rejects Chromium's default WebDriver context with 400023.
         # Use a separate ordinary Chrome window; no user profile or saved login is read.
         self._detail_page = None
+        self.listing_setup_requests = 0
+        self.listing_page_reused = False
         return playwright.chromium.launch(channel="chrome", headless=False,
             ignore_default_args=["--enable-automation"],
             args=["--disable-blink-features=AutomationControlled"])
@@ -64,17 +80,21 @@ class PinduoduoSource(BrowserSource):
             # Keep the page alive so the official SDK can finish its verification flow.
             # If it shows a CAPTCHA, the user completes it in Chrome; never solve it here.
             from playwright.sync_api import TimeoutError as BrowserTimeout
-            print(f"拼多多：等待官网自动验证；若出现交互验证码请手动完成（最多等待 {self.verification_timeout} 秒）。", flush=True)
+            if not self.verification_callback:
+                print(f"拼多多：等待官网验证；若出现交互验证码请手动完成（最多等待 {self.verification_timeout} 秒）。", flush=True)
             body = response.request.post_data_json or {}
             operation = {key: body[key] for key in ("code", "page") if key in body}
-            deadline = time.monotonic() + self.verification_timeout
+            started = time.monotonic()
+            deadline = started + self.verification_timeout
+            notify_after = started + min(5, self.verification_timeout)
             notified = False
             try:
                 while payload.get("errorCode") == 54001:
                     if pending_responses:
                         payload = self.response_payload(pending_responses.pop(0))
                         continue
-                    if (self.verification_callback and not notified
+                    # Allow transient SDK checks to finish before asking for input.
+                    if (self.verification_callback and not notified and time.monotonic() >= notify_after
                             and page.get_by_placeholder("请输入上图计算结果", exact=True).is_visible() is True):
                         page.bring_to_front()
                         self.verification_callback(page, endpoint, operation, "needs_human")
@@ -116,25 +136,39 @@ class PinduoduoSource(BrowserSource):
                 return self.fetch_list_page(page)
 
         if page == 1:
-            if self._listing_page:
-                self._listing_page.close()
-            self._listing_page = self._context.new_page()
+            self.listing_page_reused = self._listing_page is not None and not self._listing_page.is_closed()
+            if not self.listing_page_reused:
+                self._listing_page = self._context.new_page()
             self._current_page = 0
         if self._listing_page is None or page != self._current_page + 1:
             raise RuntimeError("拼多多浏览器分页必须从 1 开始依次抓取")
         browser_page = self._listing_page
         def navigate():
             if page == 1:
-                browser_page.goto(self.url, wait_until="domcontentloaded", timeout=45000)
+                if self.listing_page_reused:
+                    # Refresh through the normal site UI, keeping the tab and SDK alive.
+                    browser_page.get_by_role("button", name="搜 索", exact=True).click()
+                else:
+                    browser_page.goto(self.url, wait_until="domcontentloaded", timeout=45000)
             else:
                 browser_page.get_by_title("下一页", exact=True).click()
         payload = self._load_operation(browser_page, "/api/recruit/position/list", {"page": page}, navigate)
+        if page == 1 and not self.listing_page_reused and payload.get("success") is True:
+            self.listing_setup_requests += 1
+            # Use the website's public page-size selector, not a modified request.
+            time.sleep(self.minimum_delay)
+            def resize():
+                browser_page.get_by_text("10 条/页", exact=True).click()
+                browser_page.get_by_text(f"{self.page_size} 条/页", exact=True).click()
+            payload = self._load_operation(browser_page, "/api/recruit/position/list", {"page": 1}, resize)
         if payload.get("success") is not True:
             raise RuntimeError(f"拼多多官网获取失败: {payload.get('errorCode')} / {payload.get('errorMsg')}；保留旧缓存")
         data = payload.get("result")
         rows = require_list(data, "list", self.name)
+        if page == 1 and len(rows) < min(self.page_size, int(data["total"])):
+            raise RuntimeError("拼多多官网未返回所选分页大小，停止以免误判列表完整；保留旧缓存")
         self._current_page = page
-        return JobPage(page, int(data["total"]), [normalize_job(raw) for raw in rows], has_more=page * 10 < int(data["total"]))
+        return JobPage(page, int(data["total"]), [normalize_job(raw) for raw in rows], has_more=page * self.page_size < int(data["total"]))
 
     def fetch_job_detail(self, job):
         detail = self.fetch_detail(job["id"])
