@@ -29,6 +29,14 @@ def row(number="1", **overrides):
 
 
 class CustomParserTests(unittest.TestCase):
+    def test_recruitment_type_mapping_and_campus_source_scope(self):
+        adapter = CustomSource(config(fields={"recruitment_type": "kind", "title": "title", "url": "url"}))
+        page = adapter.parse_document(json.dumps({"jobs": [row(kind="校园招聘")]}))
+        self.assertEqual(page.jobs[0]["recruitment_type"], "campus")
+        campus = CustomSource(config(url="https://campus.lagou.com/"))
+        self.assertEqual(campus.parse_document(json.dumps({"jobs": [row()]})).jobs[0]["recruitment_type"], "campus")
+        self.assertEqual(CustomSource(config()).parse_document(json.dumps({"jobs": [row()]})).jobs[0]["recruitment_type"], "unknown")
+
     def test_json_mapping_and_shared_job_schema(self):
         adapter = CustomSource(config(items="data.posts", fields={"id": "code", "title": "name",
             "url": "link", "locations": "cities", "requirements": "requirements"}))

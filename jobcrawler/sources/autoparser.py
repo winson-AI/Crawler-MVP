@@ -15,6 +15,7 @@ ALIASES = {
     "published_at": ("publishedat", "dateposted", "publishtime", "publishdate", "createdat"),
     "updated_at": ("updatedat", "updatetime"),
     "department": ("department", "departmentname"),
+    "recruitment_type": ("recruitmenttype",),
     "work_years": ("workyears", "workyearstring", "experience", "experiencerequirement"),
 }
 

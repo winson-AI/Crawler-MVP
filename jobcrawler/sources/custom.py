@@ -17,7 +17,7 @@ CONFIG_PATH = Path(__file__).resolve().parents[2] / "sources.local.json"
 MAX_DOCUMENT = 2 * 1024 * 1024
 FAKE_IP = ipaddress.ip_network("198.18.0.0/15")
 FIELDS = {"id", "title", "url", "company", "locations", "requirements", "description",
-          "published_at", "updated_at", "department", "category", "work_years"}
+          "published_at", "updated_at", "department", "category", "work_years", "recruitment_type"}
 
 
 def public_url(value):
@@ -319,7 +319,7 @@ class CustomSource:
         values["company"] = values["company"] or self.config.get("company", "")
         for key in ("published_at", "updated_at"):
             values[key] = iso_date(raw.get(key) if isinstance(raw.get(key), (int, float)) else values[key])
-        job = build_job(source=self.id, **values)
+        job = build_job(source=self.id, source_url=self.url, **values)
         job["details_pending"] = not bool(job["requirements"] or job["description"])
         return job
 

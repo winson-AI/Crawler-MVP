@@ -6,6 +6,7 @@ import time
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
+from .selectors import job_recruitment_type
 from .sources import get_source
 
 DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "data" / "jobs.json"
@@ -95,6 +96,7 @@ def load_cache(path=DEFAULT_CACHE, source="baidu"):
         # Old snapshots lack publication dates: never infer them from updated_at.
         for job in snapshot["jobs"]:
             job.setdefault("published_at", "")
+            job["recruitment_type"] = job_recruitment_type(job, snapshot.get("source_url", adapter.url))
         return snapshot
     return {"source_id": adapter.id, "source_name": adapter.name, "source_url": adapter.url,
             "fetched_at": None, "reported_total": 0, "collected": 0, "pages": 0,
@@ -104,7 +106,7 @@ def load_cache(path=DEFAULT_CACHE, source="baidu"):
 def export_csv(jobs):
     stream = io.StringIO(newline="")
     fields = ["title", "source", "company", "locations", "experience_min", "experience_max", "experience_evidence",
-              "technologies", "department", "category", "published_at", "updated_at", "url", "requirements", "description", "details_pending"]
+              "technologies", "department", "category", "recruitment_type", "published_at", "updated_at", "url", "requirements", "description", "details_pending"]
     writer = csv.DictWriter(stream, fieldnames=fields)
     writer.writeheader()
     for job in jobs:

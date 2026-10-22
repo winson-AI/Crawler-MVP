@@ -1,4 +1,5 @@
 {
+  "recruitment_type": "all",
   "locations": ["北京", "上海"],
   "years": 3,
   "include_unknown_experience": false,

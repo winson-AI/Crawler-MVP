@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from urllib.parse import urlsplit
 
 
 TECH_ALIASES = {
@@ -76,15 +77,37 @@ def parse_experience(raw, requirements):
     return {"min": None, "max": None, "evidence": "", "source": "unknown"}
 
 
+def job_recruitment_type(job, source_url=""):
+    """Use explicit labels or known source scope, never experience/requirements."""
+    aliases = {"campus": "campus", "校招": "campus", "校园招聘": "campus",
+               "social": "social", "社招": "social", "社会招聘": "social"}
+    explicit = fold(job.get("recruitment_type") or "").strip()
+    if explicit and explicit != "unknown":
+        return aliases.get(explicit, "unknown")
+    labels = " ".join([job.get("title") or "", job.get("category") or ""])
+    campus, social = bool(re.search(r"校招|校园招聘", labels)), bool(re.search(r"社招|社会招聘", labels))
+    if campus or social:
+        return "unknown" if campus and social else "campus" if campus else "social"
+    for url in (source_url, job.get("url") or ""):
+        if urlsplit(url).hostname in ("campus.51job.com", "campus.lagou.com"):
+            return "campus"
+    if job.get("source") in ("baidu", "alibaba", "tencent", "meituan", "bytedance", "jd", "pinduoduo"):
+        return "social"
+    return "unknown"
+
+
 def validate_selector(value):
     if not isinstance(value, dict):
         raise ValueError("selector 必须是 JSON 对象")
     allowed = {"locations", "technologies", "technology_mode", "keywords", "keyword_mode",
-               "exclude_keywords", "years", "include_unknown_experience"}
+               "exclude_keywords", "years", "include_unknown_experience", "recruitment_type"}
     unknown = set(value) - allowed
     if unknown:
         raise ValueError(f"未知 selector 字段: {', '.join(sorted(unknown))}")
     result = dict(value)
+    result["recruitment_type"] = value.get("recruitment_type", "all")
+    if result["recruitment_type"] not in ("all", "campus", "social", "unknown"):
+        raise ValueError("recruitment_type 必须为 all/campus/social/unknown（不限/校招/社招/未知）")
     for key in ("locations", "technologies", "keywords", "exclude_keywords"):
         terms = value.get(key, [])
         if not isinstance(terms, list) or any(not isinstance(t, str) or not t.strip() for t in terms):
@@ -109,6 +132,9 @@ def select_jobs(jobs, selector):
     s = validate_selector(selector)
     selected = []
     for job in jobs:
+        recruitment_type = job_recruitment_type(job)
+        if s["recruitment_type"] != "all" and recruitment_type != s["recruitment_type"]:
+            continue
         if s["locations"] and not any(fold(city.removesuffix("市")) in (
                                       fold(place.removesuffix("市")), fold(place.split("·", 1)[0].removesuffix("市")))
                                       for city in s["locations"] for place in job["locations"]):
@@ -129,5 +155,6 @@ def select_jobs(jobs, selector):
             continue
         if s["keywords"] and (len(matched_words) != len(s["keywords"]) if s["keyword_mode"] == "all" else not matched_words):
             continue
-        selected.append({**job, "matches": {"technologies": matched_tech, "keywords": matched_words}})
+        selected.append({**job, "recruitment_type": recruitment_type,
+                         "matches": {"technologies": matched_tech, "keywords": matched_words}})
     return selected

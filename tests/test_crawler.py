@@ -9,9 +9,11 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 
 from jobcrawler.crawler import crawl, export_csv, load_cache, save_cache
-from jobcrawler.selectors import parse_experience, select_jobs, tech_matches, validate_selector
+from jobcrawler.incremental import content_hash
+from jobcrawler.selectors import job_recruitment_type, parse_experience, select_jobs, tech_matches, validate_selector
 from jobcrawler.sources.baidu import normalize_job
 from jobcrawler.sources.base import JobPage
 from jobcrawler.server import make_server
@@ -86,6 +88,62 @@ class SelectorTests(unittest.TestCase):
                         {"keyword_mode": "xor"}, {"include_unknown_experience": "false"}, []]:
             with self.subTest(selector=invalid), self.assertRaises(ValueError):
                 validate_selector(invalid)
+
+    def test_recruitment_type_filter_and_combined_conditions(self):
+        jobs = [{**self.jobs[0], "recruitment_type": "campus"},
+                {**self.jobs[1], "recruitment_type": "social"},
+                {**self.jobs[2], "source": "custom_unknown", "recruitment_type": "unknown"}]
+        for kind, ids in (("all", ["one", "two", "three"]), ("campus", ["one"]),
+                          ("social", ["two"]), ("unknown", ["three"])):
+            self.assertEqual([j["id"] for j in select_jobs(jobs, {"recruitment_type": kind})], ids)
+        self.assertEqual(len(select_jobs(jobs, {})), 3)
+        self.assertEqual(len(select_jobs(jobs, {"recruitment_type": "campus", "locations": ["北京"],
+            "years": 3, "technologies": ["Python"], "keywords": ["大模型"]})), 1)
+        self.assertEqual(select_jobs(jobs, {"recruitment_type": "campus", "locations": ["深圳"]}), [])
+
+    def test_recruitment_type_validation(self):
+        for value in (None, "", "intern", "校招", [], True):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_selector({"recruitment_type": value})
+        self.assertEqual(validate_selector({})["recruitment_type"], "all")
+
+    def test_recruitment_type_uses_explicit_evidence_not_experience(self):
+        cases = [
+            ({"recruitment_type": "校园招聘", "source": "baidu"}, "campus"),
+            ({"recruitment_type": "social", "title": "校招专员"}, "social"),
+            ({"title": "后端工程师（校招）"}, "campus"),
+            ({"category": "社会招聘"}, "social"),
+            ({"title": "校招/社招工程师", "source": "baidu"}, "unknown"),
+            ({"source": "baidu"}, "social"),
+            ({"url": "https://campus.lagou.com/"}, "campus"),
+            ({"url": "https://campus.lagou.com.evil.com/"}, "unknown"),
+            ({"title": "实习生", "requirements": "应届毕业生，校园项目经验", "experience": {"min": 0}}, "unknown"),
+        ]
+        for job, kind in cases:
+            with self.subTest(job=job):
+                self.assertEqual(job_recruitment_type(job), kind)
+
+    def test_legacy_cache_inherits_campus_source_without_changing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.json"
+            job = {k: v for k, v in self.jobs[0].items() if k != "recruitment_type"}
+            job["source"] = "custom_old_campus"
+            snapshot = {"source_id": job["source"], "source_url": "https://campus.51job.com/asiainfo/jobs.html", "jobs": [job]}
+            save_cache(snapshot, path)
+            before = path.read_bytes()
+            adapter = SimpleNamespace(id=job["source"], name="校招", url=snapshot["source_url"])
+            with patch("jobcrawler.crawler.get_source", return_value=adapter):
+                loaded = load_cache(path, job["source"])
+            self.assertEqual(loaded["jobs"][0]["recruitment_type"], "campus")
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_adding_derived_type_does_not_report_all_legacy_jobs_as_updated(self):
+        legacy = {k: v for k, v in self.jobs[0].items() if k != "recruitment_type"}
+        self.assertEqual(content_hash(legacy), content_hash({**legacy, "recruitment_type": "social"}))
+        self.assertNotEqual(content_hash(legacy), content_hash({**legacy, "recruitment_type": "campus"}))
+        legacy["source"] = "custom_campus"
+        url = "https://campus.lagou.com/"
+        self.assertEqual(content_hash(legacy, url), content_hash({**legacy, "recruitment_type": "campus"}, url))
 
 
 class CrawlerTests(unittest.TestCase):
@@ -193,6 +251,26 @@ class ServerTests(unittest.TestCase):
             self.assertIn("attachment", response.headers["Content-Disposition"])
         with self.assertRaises(HTTPError) as result:
             urlopen(self.url + "/api/jobs?selector=%7B%22years%22%3A-1%7D")
+        self.assertEqual(result.exception.code, 400)
+
+    def test_recruitment_selector_api_and_exports(self):
+        snapshot = load_cache(self.cache)
+        snapshot["jobs"][0]["recruitment_type"] = "campus"
+        save_cache(snapshot, self.cache)
+        for kind in ("campus", "social", "unknown"):
+            params = urlencode({"selector": json.dumps({"recruitment_type": kind})})
+            with urlopen(self.url + "/api/jobs?" + params) as response:
+                result = json.load(response)
+            self.assertEqual(result["total"], 0 if kind == "unknown" else 1)
+            self.assertTrue(all(job["recruitment_type"] == kind for job in result["jobs"]))
+            with urlopen(self.url + "/api/export?format=json&" + params) as response:
+                exported = json.load(response)
+            self.assertEqual(exported["jobs"], result["jobs"])
+            self.assertEqual(exported["selector"]["recruitment_type"], kind)
+            with urlopen(self.url + "/api/export?format=csv&" + params) as response:
+                self.assertIn("recruitment_type", response.read().decode())
+        with self.assertRaises(HTTPError) as result:
+            urlopen(self.url + "/api/jobs?" + urlencode({"selector": '{"recruitment_type":"invalid"}'}))
         self.assertEqual(result.exception.code, 400)
 
     def test_refresh_failure_preserves_cache(self):

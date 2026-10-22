@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .crawler import PaginationError, load_cache, save_cache
+from .selectors import job_recruitment_type
 from .sources import get_source
 from .sources.base import JobPage
 from .verification import record_verification
@@ -19,8 +20,9 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def content_hash(job):
-    return digest({k: v for k, v in job.items() if k != "matches"})
+def content_hash(job, source_url=""):
+    normalized = {**job, "recruitment_type": job_recruitment_type(job, source_url)}
+    return digest({k: v for k, v in normalized.items() if k != "matches"})
 
 
 def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.4,
@@ -166,7 +168,8 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                 else:
                     job = summary
                     stats["embedded_details"] += 1
-                if old and content_hash(old) != content_hash(job):
+                job = {**job, "recruitment_type": job_recruitment_type(job, adapter.url)}
+                if old and content_hash(old, adapter.url) != content_hash(job, adapter.url):
                     updated.append(job_id)
                 jobs.append(job)
                 if progress:

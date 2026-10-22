@@ -128,10 +128,13 @@ python3 scripts/verify_sources.py --sources alibaba tencent meituan bytedance jd
 
 ## Selector
 
+页面“招聘类型”支持不限、校招、社招和未知，对应 `recruitment_type: all/campus/social/unknown`，默认不限（含未知）。可与地点、年限、技术及关键词组合，保存条件和 JSON/CSV 导出同步生效。优先使用明确的招聘类型，其次识别标题/类别中的校招或社招标记、已适配的校招入口、内置社招来源；不根据零年限、实习或职责中出现的“校园”猜测。旧快照读取时兼容补充该字段，不需要重新抓取；类型未知不会混入指定校招/社招结果。
+
 示例见 `selector.example.json`：
 
 ```json
 {
+  "recruitment_type": "all",
   "locations": ["北京", "上海"],
   "years": 3,
   "include_unknown_experience": false,
