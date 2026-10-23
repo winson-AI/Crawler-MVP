@@ -75,7 +75,7 @@ def main():
                 verification_wait=args.verification_wait, progress=sync_progress,
                 pdd_details=args.pdd_details)
             print(json.dumps(report, ensure_ascii=False, indent=2))
-            if report.get("failed_sources"):
+            if report.get("failed_sources") or report.get("personal_updates", {}).get("errors"):
                 return 1
             if report.get("paused_sources"):
                 return 2
@@ -85,6 +85,8 @@ def main():
                 f"第 {p['page']} 页 · {p['collected']}/{p['reported_total']}", file=sys.stderr), source=args.source)
             save_cache(stamp_snapshot(snapshot, previous, ledger=Path(args.cache).parent / "observations.sqlite3"),
                        cache_path(args.source, args.cache))
+            from .inbox import process_inbox
+            snapshot["personal_updates"] = process_inbox(cache=args.cache)
             print(json.dumps({k: v for k, v in snapshot.items() if k != "jobs"}, ensure_ascii=False, indent=2))
         elif args.command == "filter":
             path = cache_path(args.source, args.cache)

@@ -7,11 +7,37 @@ from pathlib import Path
 
 @unittest.skipUnless(shutil.which('node'), 'browser term parsing check requires node')
 class WebTermsTests(unittest.TestCase):
+    def test_complete_script_parses_and_inbox_exports_keep_saved_scope(self):
+        html = (Path(__file__).resolve().parents[1] / 'jobcrawler/web/index.html').read_text()
+        whole = html.split('<script>', 1)[1].split('</script>', 1)[0]
+        parsed = subprocess.run(['node', '-e', 'new Function(' + json.dumps(whole) + ')'], capture_output=True, text=True)
+        self.assertEqual(parsed.returncode, 0, parsed.stderr)
+        search = html[html.index('async function search('):html.index('function selectedSources(')]
+        script = '''
+const nodes={};const $=id=>nodes[id]||(nodes[id]={value:'',checked:false,removeAttribute(){}});
+const selector=()=>({keywords:['unsaved']}), selectedSources=()=>['baidu'];
+let jobs=[],searchVersion=0,active={},activeQuery='',searchTotal=0,hasMore=false;
+const localStorage={setItem(){}},error=message=>{if(message)throw Error(message)},render=()=>{};
+let requested;
+async function request(url){requested=url;return url.startsWith('/api/inbox?')?{jobs:[],total:0,has_more:false,intent:{name:'saved'},counts:{unread:0,read:2,updated:1},source_errors:[]}:{jobs:[],total:0,has_more:false,matched_count:0,uncertain_count:0,sources:['baidu'],snapshots:[],source_errors:[]};}
+''' + search + '''
+(async()=>{
+ $('workspace-view').value='inbox';$('intent-list').value='saved-id';$('inbox-filter').value='updated';await search();
+ const q=new URLSearchParams(requested.split('?')[1]);
+ if(!requested.startsWith('/api/inbox?')||q.get('intent_id')!=='saved-id'||q.get('state')!=='updated'||q.has('selector'))throw Error('saved inbox scope');
+ if(!$('csv-export').href.startsWith('/api/inbox/export?')||$('csv-export').href.includes('limit='))throw Error('inbox export scope');
+ $('workspace-view').value='applications';await search();
+ if(new URLSearchParams(requested.split('?')[1]).get('applications')!=='1'||!$('csv-export').href.includes('applications=1'))throw Error('application export scope');
+})().catch(error=>{console.error(error);process.exit(1)});
+'''
+        completed = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_unified_search_pagination_exports_and_stale_response_guard(self):
         html = (Path(__file__).resolve().parents[1] / 'jobcrawler/web/index.html').read_text()
         search = html[html.index('async function search('):html.index('function selectedSources(')]
         script = '''
-const nodes={}; const $=id=>nodes[id]||(nodes[id]={value:'published_desc',checked:true,disabled:false});
+const nodes={}; const $=id=>nodes[id]||(nodes[id]={value:'published_desc',checked:true,disabled:false,removeAttribute(){}});
 const selector=()=>({years:3}), selectedSources=()=>['baidu','tencent'];
 let jobs=[],searchVersion=0,active={},activeQuery='',searchTotal=0,hasMore=false;
 const localStorage={setItem(){}}, error=message=>{if(message)throw Error(message)}, render=()=>{};

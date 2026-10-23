@@ -179,5 +179,11 @@ def sync_jobs(sources=None, state_path=DEFAULT_STATE, cache=DEFAULT_CACHE,
                       updated_count=sum(r.get("updated_count", 0) for r in report["sources"].values()),
                       paused_sources=[s for s, r in report["sources"].items() if r["status"] == "paused"],
                       failed_sources=[s for s, r in report["sources"].items() if r["status"] == "error"])
+        from .inbox import process_inbox
+        try:
+            report["personal_updates"] = process_inbox(cache=cache,
+                excluded_sources=report["failed_sources"] + report["paused_sources"])
+        except Exception as exc:
+            report["personal_updates"] = {"errors": [{"error": str(exc)}]}
         save_cache(report, run_path / "report.json")
         return report

@@ -140,7 +140,8 @@ def export_csv(jobs):
     stream = io.StringIO(newline="")
     fields = ["id", "title", "source", "company", "locations", "experience_min", "experience_max", "experience_evidence",
               "technologies", "department", "category", "recruitment_type", "published_at", "updated_at", "url", "requirements", "description", "details_pending",
-              "first_seen_at", "last_seen_at", "details_fetched_at", "match_state", "uncertainty_reasons", "favorite", "freshness_status"]
+              "first_seen_at", "last_seen_at", "details_fetched_at", "match_state", "uncertainty_reasons", "favorite", "freshness_status",
+              "intent_name", "change_kind", "read_state", "inbox_version", "changed_at", "application_status", "application_notes"]
     writer = csv.DictWriter(stream, fieldnames=fields)
     writer.writeheader()
     for job in jobs:

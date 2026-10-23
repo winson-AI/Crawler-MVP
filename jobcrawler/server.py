@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache, stamp_snapshot
 from .discovery import search_jobs, enrich_job
 from .personal import PersonalStore
+from .inbox import process_inbox, refresh_intent, read_inbox, application_fields
 from .rankers import DEFAULT_RANKER
 from .sources import get_source, list_sources, load_custom_sources, register_custom_source
 from .sources.custom import CONFIG_PATH, MAX_DOCUMENT, CustomSource, read_configs
@@ -30,6 +31,24 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
     pdd_stop = Event()
     closing = False
     personal = PersonalStore(Path(cache).parent / "personal.sqlite3")
+    inbox_stop = threading.Event()
+
+    def update_inbox():
+        result = process_inbox(cache=cache, store=personal)
+        with lock:
+            state["personal_updates"] = result
+        return result
+
+    def inbox_worker():
+        while not inbox_stop.is_set():
+            try:
+                update_inbox()
+            except Exception as exc:
+                with lock:
+                    state["personal_updates"] = {"errors": [{"error": str(exc)}]}
+            inbox_stop.wait(60)
+
+    inbox_thread = threading.Thread(target=inbox_worker, name="intent-digests", daemon=True)
 
     def refresh(max_pages, source):
         adapter = get_source(source)
@@ -55,6 +74,7 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                 if original is not None and adapter.config != original:
                     register_custom_source(adapter.config, custom_path)
                 save_cache(snapshot, cache_path(source, cache))
+                update_inbox()
         except Exception as exc:
             if original is not None:
                 adapter.__dict__.update(CustomSource(original).__dict__)
@@ -119,6 +139,32 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                     return self.send(200, {"sources": list_sources()})
                 if url.path == "/api/intents":
                     return self.send(200, {"intents": personal.intents()})
+                if url.path == "/api/notifications":
+                    return self.send(200, {"notifications": personal.notifications()})
+                if url.path == "/api/notifications/export":
+                    ident = query.get("id", [""])[0]
+                    notification = next((n for n in personal.notifications() if n["id"] == ident), None)
+                    if not notification:
+                        raise ValueError("摘要不存在")
+                    return self.send(200, notification, filename="digest.json")
+                if url.path in ("/api/inbox", "/api/inbox/export"):
+                    ident = query.get("intent_id", [""])[0]
+                    intent = personal.intent(ident)
+                    changes = refresh_intent(personal, intent, cache)
+                    result = read_inbox(personal, ident, query.get("state", ["unread"])[0])
+                    result["source_errors"] = changes["source_errors"]
+                    if url.path.endswith("/export"):
+                        fmt = query.get("format", ["json"])[0]
+                        if fmt == "csv":
+                            return self.send(200, export_csv(result["jobs"]), "text/csv; charset=utf-8", "inbox.csv")
+                        if fmt != "json":
+                            raise ValueError("format 必须为 json 或 csv")
+                        return self.send(200, result, filename="inbox.json")
+                    offset, limit = int(query.get("offset", ["0"])[0]), int(query.get("limit", ["30"])[0])
+                    if offset < 0 or not 1 <= limit <= 200:
+                        raise ValueError("分页参数无效")
+                    result.update(jobs=result["jobs"][offset:offset+limit], has_more=offset+limit < result["total"])
+                    return self.send(200, result)
                 if url.path == "/api/templates":
                     return self.send(200, {**template_catalog(), "learned": read_configs(custom_path)})
                 if url.path == "/api/status":
@@ -129,10 +175,10 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                     return self.send(200, {**status, "configuration_changed": bool(isinstance(adapter, CustomSource)
                         and snapshot.get("fetched_at") and snapshot.get("adapter_revision") != adapter.revision),
                         "snapshot": {k: v for k, v in snapshot.items() if k != "jobs"}})
-                if url.path in ("/api/jobs", "/api/export", "/api/favorites"):
+                if url.path in ("/api/jobs", "/api/export", "/api/favorites", "/api/applications"):
                     selector = json.loads(query.get("selector", ["{}"])[0])
                     ranker = query.get("ranker", [DEFAULT_RANKER])[0]
-                    source_arg = query.get("sources", ["all" if url.path == "/api/favorites" else source])[0]
+                    source_arg = query.get("sources", ["all" if url.path in ("/api/favorites", "/api/applications") else source])[0]
                     sources = [s["id"] for s in list_sources()] if source_arg == "all" else list(dict.fromkeys(source_arg.split(",")))
                     for item in sources:
                         get_source(item)
@@ -141,17 +187,23 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                         if value not in ("0", "1"):
                             raise ValueError(name + " 必须为 0 或 1")
                         return value == "1"
-                    favorites = personal.favorites()
+                    tracking = url.path == "/api/applications" or flag("applications")
+                    favorites = personal.applications() if tracking else personal.favorites()
                     include_uncertain = flag("include_uncertain")
-                    if source_arg == "all" and (url.path == "/api/favorites" or flag("favorites")):
+                    if source_arg == "all" and (tracking or url.path == "/api/favorites" or flag("favorites")):
                         sources = list(dict.fromkeys(sources + [row["source"] for row in favorites]))
                     result = search_jobs(sources, selector, ranker, cache, favorites,
-                        only_favorites=url.path == "/api/favorites" or flag("favorites"),
+                        only_favorites=tracking or url.path == "/api/favorites" or flag("favorites"),
                         include_uncertain="include_uncertain" in query or include_uncertain)
                     if "include_uncertain" in query and not include_uncertain:
                         result["jobs"] = [j for j in result["jobs"] if j["match_state"] == "matched"]
                         result.update(total=len(result["jobs"]), uncertain_count=0)
                     jobs = result["jobs"]
+                    jobs = application_fields(personal, jobs)
+                    if tracking:
+                        favorite_keys = {(f["source"], f["id"]) for f in personal.favorites()}
+                        jobs = [{**j, "favorite": (j["source"], j["id"]) in favorite_keys} for j in jobs]
+                    result["jobs"] = jobs
                     result["source"] = source if "sources" not in query else source_arg
                     if url.path == "/api/export":
                         fmt = query.get("format", ["json"])[0]
@@ -175,7 +227,8 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
         def do_POST(self):
             nonlocal pdd_thread
             if self.path not in ("/api/crawl", "/api/sources/preview", "/api/sources/custom", "/api/templates/match",
-                                  "/api/intents", "/api/intents/delete", "/api/favorites"):
+                                  "/api/intents", "/api/intents/delete", "/api/favorites", "/api/inbox/read",
+                                  "/api/inbox/refresh", "/api/applications", "/api/digest/settings", "/api/notifications/read"):
                 return self.send(404, {"error": "路径不存在"})
             # Only the local same-origin UI can start a crawl through the browser.
             origin = self.headers.get("Origin")
@@ -199,7 +252,35 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                 if not isinstance(body, dict):
                     raise ValueError("请求体必须为 JSON 对象")
                 if self.path == "/api/intents":
-                    return self.send(200, personal.save_intent(body))
+                    intent = personal.save_intent(body)
+                    refresh_intent(personal, intent, cache)
+                    return self.send(200, intent)
+                if self.path == "/api/inbox/refresh":
+                    return self.send(200, process_inbox(cache=cache, store=personal, intent_id=body.get("intent_id")))
+                if self.path == "/api/inbox/read":
+                    if any(not isinstance(body.get(k), str) for k in ("intent_id", "source", "id")):
+                        raise ValueError("阅读记录身份无效")
+                    personal.mark_read(body["intent_id"], body["source"], body["id"], body.get("version"), body.get("read", True))
+                    return self.send(200, {"saved": True})
+                if self.path == "/api/digest/settings":
+                    personal.intent(body.get("intent_id"))
+                    return self.send(200, personal.digest_settings(body["intent_id"], body.get("settings")))
+                if self.path == "/api/notifications/read":
+                    personal.read_notification(body.get("id"))
+                    return self.send(200, {"saved": True})
+                if self.path == "/api/applications":
+                    source, ident = body.get("source"), body.get("id")
+                    if not isinstance(source, str) or not isinstance(ident, str):
+                        raise ValueError("职位身份无效")
+                    try:
+                        snapshot = load_cache(cache_path(source, cache), source)
+                        job = next((enrich_job(j, snapshot) for j in snapshot["jobs"] if j["id"] == ident), None)
+                    except (OSError, ValueError):
+                        job = None
+                    job = job or personal.saved_job(source, ident)
+                    if job is None:
+                        raise ValueError("未找到可跟进的职位")
+                    return self.send(200, personal.application(job, body.get("status"), body.get("notes", "")))
                 if self.path == "/api/intents/delete":
                     personal.delete_intent(body.get("id"))
                     return self.send(200, {"deleted": True})
@@ -260,6 +341,7 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                         stamp_snapshot(snapshot, load_cache(cache_path(registered.id, cache), registered.id),
                             ledger=Path(cache).parent / "observations.sqlite3")
                         save_cache(snapshot, cache_path(registered.id, cache))
+                        update_inbox()
                         with lock:
                             state.update(running=False, progress=None)
                         return self.send(200, {**result, "mounted": True, "refreshing": False})
@@ -302,14 +384,19 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
             nonlocal closing
             with lock:
                 closing = True
+                inbox_stop.set()
                 pdd_stop.set()
                 worker = pdd_thread
                 if worker and worker.is_alive():
                     pdd_tasks.put(None)
             if worker:
                 worker.join(timeout=5)
+            if inbox_thread.is_alive():
+                inbox_thread.join(timeout=5)
             from .sources.live_browser import close_browser_reader
             close_browser_reader()
             super().server_close()
 
-    return Server((host, port), Handler)
+    server = Server((host, port), Handler)
+    inbox_thread.start()
+    return server

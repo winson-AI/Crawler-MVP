@@ -62,6 +62,16 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(result["sources"]["baidu"]["new_count"], 0)
         self.assertEqual(result["sources"]["tencent"]["new_count"], 1)
 
+    def test_personal_update_failure_is_reported_after_successful_source_commit(self):
+        save_cache(snapshot("baidu", ["1"]), self.cache)
+        with patch("jobcrawler.sync.crawl", return_value=snapshot("baidu", ["1", "2"])), \
+                patch("jobcrawler.inbox.process_inbox", side_effect=OSError("personal storage unavailable")):
+            result = self.run_sync(sources=["baidu"])
+        self.assertEqual(result["sources"]["baidu"]["status"], "ok")
+        self.assertEqual(result["personal_updates"]["errors"][0]["error"], "personal storage unavailable")
+        persisted = json.loads(Path(result["report_path"]).read_text())
+        self.assertEqual(persisted["personal_updates"], result["personal_updates"])
+
     def test_failed_or_partial_source_preserves_cache_and_continues(self):
         for failure in [RuntimeError("需要人工验证"), snapshot("baidu", ["2"], complete=False)]:
             with self.subTest(failure=failure):
