@@ -128,7 +128,9 @@ def validate_selector(value):
     return result
 
 
-def select_jobs(jobs, selector):
+def select_jobs(jobs, selector, include_uncertain=False):
+    if include_uncertain:
+        return _select_with_uncertainty(jobs, validate_selector(selector))
     s = validate_selector(selector)
     selected = []
     for job in jobs:
@@ -157,4 +159,43 @@ def select_jobs(jobs, selector):
             continue
         selected.append({**job, "recruitment_type": recruitment_type,
                          "matches": {"technologies": matched_tech, "keywords": matched_words}})
+    return selected
+
+
+def _select_with_uncertainty(jobs, selector):
+    """Reuse strict selection after relaxing only conditions without evidence."""
+    selected = []
+    for job in jobs:
+        relaxed, reasons = dict(selector), []
+        pending = bool(job.get("details_pending"))
+        if selector["locations"] and not job["locations"]:
+            relaxed["locations"] = []
+            reasons.append("工作地点未知")
+        if selector["recruitment_type"] not in ("all", "unknown") and job_recruitment_type(job) == "unknown":
+            relaxed["recruitment_type"] = "all"
+            reasons.append("招聘类型未知")
+        if selector["years"] is not None and (pending or job["experience"]["min"] is None):
+            relaxed["years"] = None
+            reasons.append("工作年限待确认")
+        for key, mode, match in (("technologies", "technology_mode", tech_matches),
+                                  ("keywords", "keyword_mode", lambda term, text: fold(term) in fold(text))):
+            terms = selector[key]
+            title_hits = [term for term in terms if match(term, job["title"])]
+            title_sufficient = bool(title_hits) if selector[mode] == "any" else len(title_hits) == len(terms)
+            if terms and not title_sufficient and (pending or not (job["requirements"] or job["description"])):
+                relaxed[key] = []
+                reasons.append("技术栈待确认" if key == "technologies" else "关键词待确认")
+        if selector["exclude_keywords"] and (pending or not (job["requirements"] or job["description"])):
+            # A match in the current title is definite; an old/missing body is not.
+            if not any(fold(term) in fold(job["title"]) for term in selector["exclude_keywords"]):
+                relaxed["exclude_keywords"] = []
+                reasons.append("排除关键词待确认")
+        result = select_jobs([job], relaxed)
+        if result:
+            item = result[0]
+            text = job["title"] if pending else "\n".join((job["title"], job["requirements"], job["description"]))
+            item["matches"] = {"technologies": [t for t in selector["technologies"] if tech_matches(t, text)],
+                               "keywords": [t for t in selector["keywords"] if fold(t) in fold(text)]}
+            item.update(match_state="uncertain" if reasons else "matched", uncertainty_reasons=reasons)
+            selected.append(item)
     return selected

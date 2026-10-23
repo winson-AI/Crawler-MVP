@@ -8,14 +8,20 @@
 </style>
 <style>
 .source-editor{position:static;margin-bottom:20px;padding:16px 22px}.source-editor summary{font-size:14px}.source-editor textarea{box-sizing:border-box;width:100%;border:1px solid #c8d6de;border-radius:7px;padding:10px;font:12px/1.6 monospace;resize:vertical}.source-editor pre{max-height:240px;overflow:auto;background:#f4f6f9;padding:10px}.source-editor select{max-width:270px}.source-editor .actions{flex-wrap:wrap}.source-editor p{overflow-wrap:anywhere}
+fieldset{border:1px solid var(--line);border-radius:7px;margin:18px 0;max-height:220px;overflow:auto}legend{font-size:13px;font-weight:600}.job .actions{margin-top:12px}.freshness{font-size:12px;color:var(--muted)}
+#filters{max-height:calc(100vh - 40px);overflow-y:auto}@media(max-width:800px){#filters{max-height:none;overflow:visible}}
 </style>
 </head>
 <body>
 <header><div><div class="eyebrow">JOB RADAR / 01</div><h1>职位雷达</h1><p>让下一份工作，更接近你的方向。</p></div><a id="source-link" class="source" href="https://talent.baidu.com/jobs/social-list" target="_blank" rel="noopener">数据来源：百度社会招聘 ↗</a></header>
 <main>
 <form class="panel" id="filters">
-<h2>设置你的 Selector</h2>
-<label for="source">招聘数据源</label><select id="source" disabled><option value="baidu">百度社会招聘</option></select>
+<h2>我的求职意向</h2>
+<label for="intent-list">已保存的意向</label><select id="intent-list"><option value="">当前条件（未保存）</option></select>
+<label for="intent-name">意向名称</label><input id="intent-name" type="text" maxlength="80" placeholder="例如：上海 Python 后端">
+<div class="actions"><button type="button" id="save-intent">保存意向</button><button type="button" class="secondary" id="new-intent">另存</button><button type="button" class="secondary" id="delete-intent">删除</button></div>
+<p id="intent-message" class="hint" role="status"></p>
+<fieldset id="search-sources"><legend>搜索平台（可多选）</legend></fieldset>
 <label for="recruitment-type">招聘类型</label><select id="recruitment-type"><option value="all">不限（含未知）</option><option value="campus">校招</option><option value="social">社招</option><option value="unknown">类型未知</option></select><small>按明确类型或已知来源范围识别；不按工作年限猜测</small>
 <label for="locations">工作地点</label><input id="locations" type="text" placeholder='北京，上海，"Foster City, CA"'><small>多个地点任选其一；支持省略“市”；地点含逗号时加双引号</small>
 <label for="years">我的工作年限</label><input id="years" type="number" min="0" max="80" step="0.5" placeholder="例如：3"><small>匹配职位要求的年限范围；留空不限</small>
@@ -23,11 +29,14 @@
 <label class="mode" for="tech">技术栈<select id="tech-mode" aria-label="技术栈匹配方式"><option value="all">全部命中</option><option value="any">任一命中</option></select></label><input id="tech" type="text" placeholder="Python，Java，Go"><small>不区分大小写；多个词用逗号分隔</small>
 <label class="mode" for="keywords">关键词<select id="keyword-mode" aria-label="关键词匹配方式"><option value="all">全部命中</option><option value="any">任一命中</option></select></label><input id="keywords" type="text" placeholder="大模型，后端，研发"><small>匹配标题、任职要求和工作职责</small>
 <label for="exclude">排除关键词</label><input id="exclude" type="text" placeholder="实习，销售">
+<label class="check"><input id="include-uncertain" type="checkbox" checked>同时查看信息不足、待确认的职位</label>
+<label class="check"><input id="favorites-only" type="checkbox">只看我的收藏</label>
 <div class="actions"><button type="submit">筛选职位</button><button type="button" class="secondary" id="reset">重置</button></div>
 <p class="hint">不同条件同时生效。年限依据原始文本提取，可在结果中核对。</p>
 </form>
 <section>
-<div class="status"><div><strong><span class="live-dot"></span><span id="status-title">正在读取缓存…</span></strong><p id="status-detail">首次使用请抓取职位数据。</p></div><button id="crawl" type="button">刷新全量职位</button></div>
+<div class="status"><div><strong><span class="live-dot"></span><span id="status-title">正在读取缓存…</span></strong><p id="status-detail">首次使用请抓取职位数据。</p></div><div><label for="source">刷新与查看状态的平台</label><select id="source" disabled><option value="baidu">百度社会招聘</option></select><button id="crawl" type="button">刷新全量职位</button></div></div>
+<p id="search-summary" class="hint" role="status"></p>
 <details class="panel source-editor" id="source-manager"><summary>添加网站 / 适配规则 / 导入登录后的职位文档</summary>
 <form id="source-editor">
 <label for="source-url">目标招聘网址</label><input id="source-url" type="url" placeholder="https://jobs.lever.co/公司 或你的职位网址">
@@ -54,7 +63,7 @@
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let jobs = [], visible = 30, active = {}, wasRunning = false, searchVersion = 0, sources = [];
+let jobs = [], visible = 30, active = {}, wasRunning = false, searchVersion = 0, sources = [], intents = [], searchTotal = 0, hasMore = false, activeQuery = '';
 function splitTerms(value){
  const result=[];let part='',quoted=false;
  for(let i=0;i<value.length;i++){const c=value[i];if(c==='"'){if(quoted&&value[i+1]==='"'){part+='"';i++;}else quoted=!quoted;}else if(!quoted&&/[,，、\n]/.test(c)){if(part.trim())result.push(part.trim());part='';}else part+=c;}
@@ -67,21 +76,40 @@ function selector(){return {recruitment_type:$('recruitment-type').value,locatio
 function error(message){$('error').textContent=message;$('error').style.display=message?'block':'none';}
 async function request(url,options){const response=await fetch(url,options);const data=await response.json();if(!response.ok)throw new Error(data.error||'请求失败');return data;}
 function render(){
- $('count').textContent=jobs.length;
- $('more').hidden=visible>=jobs.length;
- if(!jobs.length){$('results').innerHTML='<div class="empty">没有匹配的职位。<br><small>尝试调整筛选条件，或先刷新职位数据。</small></div>';return;}
- $('results').innerHTML=jobs.slice(0,visible).map(job=>{
+ $('count').textContent=searchTotal;
+ $('more').hidden=!hasMore;
+ if(!jobs.length){$('results').innerHTML='<div class="empty">'+($('favorites-only').checked?'当前条件下没有收藏职位。':'当前条件下没有匹配的职位。')+'<br><small>可放宽筛选、勾选“信息不足”，或检查所选平台是否已有数据。</small></div>';return;}
+ $('results').innerHTML=jobs.map((job,index)=>{
   const e=job.experience;
   const experience=e.min===null?'年限未明确':e.max===null?(e.min===0?'经验不限':`${e.min} 年及以上`):`${e.min}–${e.max} 年`;
   const chips=[`<span class="chip">${esc({campus:'校招',social:'社招'}[job.recruitment_type]||'招聘类型未知')}</span>`,...(job.details_pending?['<span class="chip">详情待补抓 · 已有内容可能为旧版</span>']:[]),...job.technologies.map(t=>`<span class="chip">${esc(t)}</span>`),...job.matches.technologies.map(t=>`<span class="chip match">技术：${esc(t)}</span>`),...job.matches.keywords.map(t=>`<span class="chip match">关键词：${esc(t)}</span>`)].join('');
-  return `<article class="job"><div class="job-head"><div><h3><a href="${esc(job.url)}" target="_blank" rel="noopener">${esc(job.title)} ↗</a></h3><div class="meta">${esc(job.company)} · ${esc(job.locations.join(' / '))} · ${esc(job.department)} · ${esc(job.category)}</div></div><span class="date">发布：${esc(job.published_at||'未知')}</span></div><div class="experience">${esc(experience)}${e.evidence?' · 依据：'+esc(e.evidence):''}</div><div class="chips">${chips}</div><p class="snippet">${esc(job.description.slice(0,180))}${job.description.length>180?'…':''}</p><details><summary>查看任职要求与工作职责</summary><strong class="meta">任职要求</strong><pre>${esc(job.requirements)}</pre><strong class="meta">工作职责</strong><pre>${esc(job.description)}</pre></details></article>`;
+  const date = value=>value&&!Number.isNaN(Date.parse(value))?new Date(value).toLocaleString('zh-CN'):'未知';
+  const freshness=`${{recent:'最近 72 小时内有记录',stale:'超过 72 小时未确认',unknown:'新鲜度未知'}[job.freshness_status]||'新鲜度未知'} · 首次发现：${date(job.first_seen_at)} · 最近记录：${date(job.last_seen_at)}${job.observation_basis==='snapshot'?'（来自列表快照）':''} · 详情获取：${date(job.details_fetched_at)}${job.source_scope==='single_page'?' · 来源仅采当前页':job.source_scope==='document'?' · 来源为导入文档':''}`;
+  return `<article class="job"><div class="job-head"><div><h3><a href="${esc(job.url)}" target="_blank" rel="noopener">${esc(job.title)} ↗</a></h3><div class="meta">${esc(job.company)} · ${esc(job.source_name)} · ${esc(job.locations.join(' / ')||'地点未知')} · ${esc(job.department)} · ${esc(job.category)}</div></div><span class="date">官网发布：${esc(job.published_at||'未知')}</span></div><p class="freshness">${esc(freshness)}</p><div class="experience">${esc(experience)}${e.evidence?' · 依据：'+esc(e.evidence):''}</div><div class="chips">${chips}</div><p>${job.match_state==='uncertain'?'信息不足：'+esc(job.uncertainty_reasons.join('、')):'符合当前筛选'}${job.archived?' · 当前列表未收录，显示收藏快照；不代表已下架':''}</p><div class="actions"><button type="button" class="secondary favorite-toggle" data-index="${index}" aria-pressed="${!!job.favorite}">${job.favorite?'取消收藏':'收藏职位'}</button></div><p class="snippet">${esc(job.description.slice(0,180))}${job.description.length>180?'…':''}</p><details><summary>查看任职要求与工作职责</summary><strong class="meta">任职要求</strong><pre>${esc(job.requirements)}</pre><strong class="meta">工作职责</strong><pre>${esc(job.description)}</pre></details></article>`;
  }).join('');
 }
-async function search(){
- const version=++searchVersion;
+async function search(append=false){
+ const version=append?searchVersion:++searchVersion;
  const next=selector();
- try{error('');const query=new URLSearchParams({selector:JSON.stringify(next),source:$('source').value,ranker:$('ranker').value});const data=await request('/api/jobs?'+query);if(version!==searchVersion)return;active=next;jobs=data.jobs;visible=30;render();for(const fmt of ['json','csv'])$(fmt+'-export').href='/api/export?'+query+'&format='+fmt;localStorage.setItem('job-selector',JSON.stringify(active));localStorage.setItem('job-source',$('source').value);localStorage.setItem('job-ranker',$('ranker').value);}catch(e){error(e.message);}
+ try{error('');$('more').disabled=true;const chosen=selectedSources();if(!chosen.length)throw Error('请至少选择一个搜索平台');
+  const query=append?new URLSearchParams(activeQuery):new URLSearchParams({selector:JSON.stringify(next),sources:chosen.join(','),ranker:$('ranker').value,include_uncertain:$('include-uncertain').checked?'1':'0',favorites:$('favorites-only').checked?'1':'0'});
+  const page=new URLSearchParams(query);page.set('limit','30');page.set('offset',append?String(jobs.length):'0');const data=await request('/api/jobs?'+page);if(version!==searchVersion)return;
+  active=next;activeQuery=query.toString();jobs=append?jobs.concat(data.jobs):data.jobs;searchTotal=data.total;hasMore=data.has_more;render();
+  const emptySources=data.snapshots.filter(s=>!s.collected).length;
+  const partialSources=data.snapshots.filter(s=>s.collected&&(!s.complete||['single_page','document'].includes(s.scope))).length;
+  $('search-summary').textContent=`${data.matched_count} 条符合 · ${data.uncertain_count} 条信息不足 · ${data.sources.length} 个平台`+(emptySources?` · ${emptySources} 个平台尚无数据`:'')+(partialSources?` · ${partialSources} 个平台仅覆盖当前页、文档或部分列表`:'')+(data.source_errors.length?' · 部分平台读取失败：'+data.source_errors.map(s=>s.source).join('、'):'');
+  for(const fmt of ['json','csv'])$(fmt+'-export').href='/api/export?'+query+'&format='+fmt;
+  localStorage.setItem('job-selector',JSON.stringify(active));localStorage.setItem('job-search-sources',JSON.stringify(chosen));localStorage.setItem('job-ranker',$('ranker').value);
+ }catch(e){if(version===searchVersion)error(e.message);}finally{if(version===searchVersion)$('more').disabled=false;}
 }
+function selectedSources(){return [...$('search-sources').querySelectorAll('input:checked')].map(n=>n.value);}
+function renderSources(chosen){$('search-sources').innerHTML='<legend>搜索平台（可多选）</legend>'+sources.map(s=>`<label class="check"><input type="checkbox" value="${esc(s.id)}" ${chosen.includes(s.id)?'checked':''}>${esc(s.name)}</label>`).join('');}
+async function loadIntents(id=''){intents=(await request('/api/intents')).intents;$('intent-list').innerHTML='<option value="">当前条件（未保存）</option>'+intents.map(i=>`<option value="${esc(i.id)}">${esc(i.name)}</option>`).join('');$('intent-list').value=id;}
+async function saveIntent(asNew=false){try{const payload={name:$('intent-name').value,sources:selectedSources(),selector:selector(),ranker:$('ranker').value,include_uncertain:$('include-uncertain').checked};if(!asNew&&$('intent-list').value)payload.id=$('intent-list').value;const saved=await request('/api/intents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});await loadIntents(saved.id);$('intent-message').textContent='已保存到本机，重启后仍可使用';}catch(e){error(e.message);}}
+$('save-intent').onclick=()=>saveIntent();$('new-intent').onclick=()=>saveIntent(true);
+$('intent-list').onchange=()=>{const item=intents.find(i=>i.id===$('intent-list').value);if(!item)return;restore(item.selector);renderSources(item.sources);$('intent-name').value=item.name;$('ranker').value=item.ranker;$('include-uncertain').checked=item.include_uncertain;$('favorites-only').checked=false;const unavailable=item.sources.filter(id=>!sources.some(s=>s.id===id));$('intent-message').textContent=unavailable.length?'有平台已移除，请检查并重新保存':'已载入求职意向';search();};
+$('delete-intent').onclick=async()=>{const id=$('intent-list').value;if(!id)return;try{await request('/api/intents/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});await loadIntents();$('intent-message').textContent='已删除意向，当前筛选条件保留';}catch(e){error(e.message);}};
+$('results').onclick=async event=>{const button=event.target.closest('.favorite-toggle');if(!button)return;const job=jobs[Number(button.dataset.index)];if(!job)return;button.disabled=true;try{await request('/api/favorites',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:job.source,id:job.id,saved:!job.favorite})});job.favorite=!job.favorite;if($('favorites-only').checked)await search();else render();}catch(e){error(e.message);button.disabled=false;}};
 function restore(s){$('recruitment-type').value=s.recruitment_type||'all';$('locations').value=joinTerms(s.locations);$('years').value=s.years??'';$('unknown').checked=!!s.include_unknown_experience;$('tech').value=joinTerms(s.technologies);$('tech-mode').value=s.technology_mode||'all';$('keywords').value=joinTerms(s.keywords);$('keyword-mode').value=s.keyword_mode||'all';$('exclude').value=joinTerms(s.exclude_keywords);}
 async function status(){
  const source=$('source').value;
@@ -103,12 +131,13 @@ async function status(){
  }catch(e){error(e.message);}
 }
 $('filters').addEventListener('submit',e=>{e.preventDefault();search();});
-$('reset').onclick=()=>{restore({});search();};
-$('more').onclick=()=>{visible+=30;render();};
+$('reset').onclick=()=>{restore({});$('intent-list').value='';$('favorites-only').checked=false;$('include-uncertain').checked=true;search();};
+$('more').onclick=()=>search(true);
+$('include-uncertain').onchange=()=>search();$('favorites-only').onchange=()=>search();
 $('crawl').onclick=async()=>{try{const config=sources.find(s=>s.id===$('source').value)?.config;if(config?.mode==='document'){$('source-manager').open=true;$('source-config').value=JSON.stringify(config,null,2);$('source-document').focus();return;}$('crawl').disabled=true;error('');await request('/api/crawl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_pages:0,source:$('source').value})});wasRunning=true;await status();}catch(e){$('crawl').disabled=false;error(e.message);}};
 try{restore(JSON.parse(localStorage.getItem('job-selector')||'{}'));}catch(e){restore({});}
 $('ranker').onchange=()=>search();
-$('source').onchange=()=>{const source=sources.find(s=>s.id===$('source').value);$('source-link').href=source.url;$('source-link').textContent='数据来源：'+source.name+' ↗';if(source.config)$('source-config').value=JSON.stringify(source.config,null,2);search();status();};
+$('source').onchange=()=>{const source=sources.find(s=>s.id===$('source').value);$('source-link').href=source.url;$('source-link').textContent='数据来源：'+source.name+' ↗';if(source.config)$('source-config').value=JSON.stringify(source.config,null,2);localStorage.setItem('job-source',source.id);status();};
 function sourceTemplate(){
  const type=$('source-template').value;
  const config={id:'custom_example',name:'我的招聘网站',url:'https://example.com/jobs',mode:'http',parser:type==='schema'?'auto':type};
@@ -137,12 +166,12 @@ async function configureSource(commit){
   $('source-config').value=JSON.stringify(data.config,null,2);
   $('source-message').textContent=`${commit?'已挂载':'预览通过'}：${data.collected} 条 · ${data.parser_used}${data.adaptation?' · 已自动适配并生成映射':''} · ${{network:'真实 HTTP 联网',public_browser_network:'独立匿名浏览器实时联网',browser_network:'已授权 Chrome 实时联网',provided_document:'提供的页面文档'}[data.acquisition]||'采集证据未确认'}${data.refreshing?'；正在后台刷新配置范围':''}。`+(data.warnings||[]).join('；');
   $('source-preview').textContent=JSON.stringify(data.sample,null,2);$('source-preview').hidden=false;
-  if(commit){const current=data.config.id;sources=(await request('/api/sources')).sources;$('source').innerHTML=sources.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');$('source').value=current;$('source').onchange();wasRunning=!!data.refreshing;loadTemplates();}
+  if(commit){const current=data.config.id;const chosen=selectedSources();sources=(await request('/api/sources')).sources;renderSources([...chosen,current]);$('source').innerHTML=sources.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');$('source').value=current;$('source').onchange();wasRunning=!!data.refreshing;search();loadTemplates();}
  }catch(e){$('source-message').textContent='适配未通过：'+e.message;}finally{buttons.forEach(button=>button.disabled=false);}
 }
 $('preview-source').onclick=()=>configureSource(false);$('source-editor').onsubmit=event=>{event.preventDefault();configureSource(true);};
 async function init(){
- try{sources=(await request('/api/sources')).sources;$('source').innerHTML=sources.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');const savedSource=localStorage.getItem('job-source');if(sources.some(s=>s.id===savedSource))$('source').value=savedSource;const savedRanker=localStorage.getItem('job-ranker');if([...$('ranker').options].some(o=>o.value===savedRanker))$('ranker').value=savedRanker;$('source').disabled=false;$('source').onchange();setInterval(status,2000);}catch(e){error(e.message);}
+ try{sources=(await request('/api/sources')).sources;$('source').innerHTML=sources.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');let chosen=sources.map(s=>s.id);try{const stored=JSON.parse(localStorage.getItem('job-search-sources'));if(Array.isArray(stored)&&stored.length)chosen=stored;}catch(e){}renderSources(chosen);const savedSource=localStorage.getItem('job-source');if(sources.some(s=>s.id===savedSource))$('source').value=savedSource;const savedRanker=localStorage.getItem('job-ranker');if([...$('ranker').options].some(o=>o.value===savedRanker))$('ranker').value=savedRanker;$('source').disabled=false;$('source').onchange();await loadIntents();await search();setInterval(status,2000);}catch(e){error(e.message);}
 }
 init();
 </script>

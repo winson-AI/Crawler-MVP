@@ -22,7 +22,8 @@ def digest(value):
 
 def content_hash(job, source_url=""):
     normalized = {**job, "recruitment_type": job_recruitment_type(job, source_url)}
-    return digest({k: v for k, v in normalized.items() if k != "matches"})
+    return digest({k: v for k, v in normalized.items() if k not in
+        ("matches", "first_seen_at", "last_seen_at", "details_fetched_at")})
 
 
 def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.4,
@@ -138,7 +139,7 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                     if entry and (entry.get("source_id") != source or str(entry["job"]["id"]) != job_id or entry["job"]["source"] != source):
                         raise ValueError("详情缓存身份不一致")
                     if entry and entry["listing_hash"] == signature:
-                        job = entry["job"]
+                        job = {**entry["job"], "details_fetched_at": entry["job"].get("details_fetched_at")}
                         stats["detail_cache_hits"] += 1
                     else:
                         # Bootstrap older full snapshots without re-fetching unchanged
@@ -146,7 +147,7 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                         fields = [k for k in LIST_FIELDS if summary.get(k)]
                         unchanged_legacy = old and not old.get("details_pending") and digest({k: old.get(k) for k in fields}) == digest({k: summary.get(k) for k in fields})
                         if not entry and unchanged_legacy:
-                            job = old
+                            job = {**old, "details_fetched_at": old.get("details_fetched_at")}
                             stats["legacy_cache_hits"] += 1
                         elif defer_details:
                             cached = entry["job"] if entry else old
@@ -159,6 +160,7 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                                 time.sleep(delay)
                             stats["detail_requests"] += 1
                             job = adapter.fetch_job_detail(summary)
+                            job["details_fetched_at"] = datetime.now(timezone.utc).isoformat()
                         if job["source"] != source or str(job["id"]) != job_id:
                             raise ValueError("详情 ID 与列表不一致")
                         if not job.get("details_pending"):

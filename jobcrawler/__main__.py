@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache
+from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache, stamp_snapshot
 from .rankers import DEFAULT_RANKER, RANKERS, rank_jobs
 from .selectors import select_jobs
 from .server import make_server
@@ -80,9 +80,11 @@ def main():
             if report.get("paused_sources"):
                 return 2
         elif args.command == "crawl":
+            previous = load_cache(cache_path(args.source, args.cache), args.source)
             snapshot = crawl(args.max_pages, args.delay, lambda p: print(
                 f"第 {p['page']} 页 · {p['collected']}/{p['reported_total']}", file=sys.stderr), source=args.source)
-            save_cache(snapshot, cache_path(args.source, args.cache))
+            save_cache(stamp_snapshot(snapshot, previous, ledger=Path(args.cache).parent / "observations.sqlite3"),
+                       cache_path(args.source, args.cache))
             print(json.dumps({k: v for k, v in snapshot.items() if k != "jobs"}, ensure_ascii=False, indent=2))
         elif args.command == "filter":
             path = cache_path(args.source, args.cache)

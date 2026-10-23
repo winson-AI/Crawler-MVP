@@ -3,7 +3,8 @@ import io
 import json
 import os
 import time
-from contextlib import nullcontext
+import sqlite3
+from contextlib import nullcontext, closing
 from datetime import datetime, timezone
 from pathlib import Path
 from .selectors import job_recruitment_type
@@ -84,6 +85,38 @@ def save_cache(snapshot, path=DEFAULT_CACHE):
     os.replace(temporary, path)
 
 
+def stamp_snapshot(snapshot, previous, ledger=None, known_ids=()):
+    """Persist observations only when a new snapshot is committed, never on reads."""
+    observed = snapshot.get("listing_fetched_at") or snapshot.get("fetched_at")
+    old = {j["id"]: j for j in previous.get("jobs", [])}
+    history = {}
+    if ledger is not None:
+        Path(ledger).parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(str(ledger), timeout=10)) as db, db:
+            db.execute("CREATE TABLE IF NOT EXISTS observations (source TEXT, id TEXT, first_seen TEXT, PRIMARY KEY(source,id))")
+            history = dict(db.execute("SELECT id, first_seen FROM observations WHERE source=?", (snapshot["source_id"],)))
+            known = set(known_ids) | set(old)
+            for job in snapshot["jobs"]:
+                ident = job["id"]
+                if ident in history:
+                    first = history[ident]
+                elif ident in known:
+                    first = old.get(ident, {}).get("first_seen_at")
+                else:
+                    first = observed
+                history[ident] = first
+                db.execute("INSERT OR IGNORE INTO observations VALUES (?,?,?)", (snapshot["source_id"], ident, first))
+    for job in snapshot["jobs"]:
+        before = old.get(job["id"], {})
+        job["first_seen_at"] = history[job["id"]] if job["id"] in history else before.get("first_seen_at") if before else observed
+        job["last_seen_at"] = observed
+        if job.get("details_pending"):
+            job["details_fetched_at"] = before.get("details_fetched_at")
+        else:
+            job.setdefault("details_fetched_at", observed)
+    return snapshot
+
+
 def load_cache(path=DEFAULT_CACHE, source="baidu"):
     adapter = get_source(source)
     path = Path(path)
@@ -105,8 +138,9 @@ def load_cache(path=DEFAULT_CACHE, source="baidu"):
 
 def export_csv(jobs):
     stream = io.StringIO(newline="")
-    fields = ["title", "source", "company", "locations", "experience_min", "experience_max", "experience_evidence",
-              "technologies", "department", "category", "recruitment_type", "published_at", "updated_at", "url", "requirements", "description", "details_pending"]
+    fields = ["id", "title", "source", "company", "locations", "experience_min", "experience_max", "experience_evidence",
+              "technologies", "department", "category", "recruitment_type", "published_at", "updated_at", "url", "requirements", "description", "details_pending",
+              "first_seen_at", "last_seen_at", "details_fetched_at", "match_state", "uncertainty_reasons", "favorite", "freshness_status"]
     writer = csv.DictWriter(stream, fieldnames=fields)
     writer.writeheader()
     for job in jobs:
@@ -114,6 +148,7 @@ def export_csv(jobs):
         row.update(locations=", ".join(job["locations"]), technologies=", ".join(job["technologies"]),
                    experience_min=job["experience"]["min"], experience_max=job["experience"]["max"],
                    experience_evidence=job["experience"]["evidence"])
+        row["uncertainty_reasons"] = "；".join(job.get("uncertainty_reasons", []))
         # Avoid spreadsheet formula execution when opening text from remote postings.
         writer.writerow({key: "'" + value if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@"))
                          else value for key, value in row.items()})

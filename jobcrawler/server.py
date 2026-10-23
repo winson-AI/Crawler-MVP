@@ -1,5 +1,6 @@
 import json
 import threading
+import sqlite3
 from contextlib import ExitStack
 from queue import Queue
 from threading import Event
@@ -8,9 +9,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache
-from .rankers import DEFAULT_RANKER, rank_jobs
-from .selectors import select_jobs
+from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache, stamp_snapshot
+from .discovery import search_jobs, enrich_job
+from .personal import PersonalStore
+from .rankers import DEFAULT_RANKER
 from .sources import get_source, list_sources, load_custom_sources, register_custom_source
 from .sources.custom import CONFIG_PATH, MAX_DOCUMENT, CustomSource, read_configs
 from .sources.templates import resolve_template, template_catalog
@@ -27,6 +29,7 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
     pdd_thread = None
     pdd_stop = Event()
     closing = False
+    personal = PersonalStore(Path(cache).parent / "personal.sqlite3")
 
     def refresh(max_pages, source):
         adapter = get_source(source)
@@ -46,7 +49,9 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                 if result["status"] != "ok":
                     raise RuntimeError(result["error"])
             else:
+                previous = load_cache(cache_path(source, cache), source)
                 snapshot = crawl(max_pages=max_pages, progress=progress, source=source)
+                stamp_snapshot(snapshot, previous, ledger=Path(cache).parent / "observations.sqlite3")
                 if original is not None and adapter.config != original:
                     register_custom_source(adapter.config, custom_path)
                 save_cache(snapshot, cache_path(source, cache))
@@ -102,6 +107,9 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
 
         def do_GET(self):
             url = urlsplit(self.path)
+            request_host = urlsplit("http://" + self.headers.get("Host", "")).hostname
+            if request_host not in ("127.0.0.1", "localhost", "::1", host):
+                return self.send(403, {"error": "只允许本机或明确绑定的 Host"})
             try:
                 query = parse_qs(url.query)
                 source = query.get("source", ["baidu"])[0]
@@ -109,6 +117,8 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                     return self.send(200, (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8"), "text/html; charset=utf-8")
                 if url.path == "/api/sources":
                     return self.send(200, {"sources": list_sources()})
+                if url.path == "/api/intents":
+                    return self.send(200, {"intents": personal.intents()})
                 if url.path == "/api/templates":
                     return self.send(200, {**template_catalog(), "learned": read_configs(custom_path)})
                 if url.path == "/api/status":
@@ -119,28 +129,53 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                     return self.send(200, {**status, "configuration_changed": bool(isinstance(adapter, CustomSource)
                         and snapshot.get("fetched_at") and snapshot.get("adapter_revision") != adapter.revision),
                         "snapshot": {k: v for k, v in snapshot.items() if k != "jobs"}})
-                if url.path in ("/api/jobs", "/api/export"):
+                if url.path in ("/api/jobs", "/api/export", "/api/favorites"):
                     selector = json.loads(query.get("selector", ["{}"])[0])
                     ranker = query.get("ranker", [DEFAULT_RANKER])[0]
-                    snapshot = load_cache(cache_path(source, cache), source)
-                    jobs = rank_jobs(select_jobs(snapshot["jobs"], selector), ranker)
+                    source_arg = query.get("sources", ["all" if url.path == "/api/favorites" else source])[0]
+                    sources = [s["id"] for s in list_sources()] if source_arg == "all" else list(dict.fromkeys(source_arg.split(",")))
+                    for item in sources:
+                        get_source(item)
+                    def flag(name, default="0"):
+                        value = query.get(name, [default])[0]
+                        if value not in ("0", "1"):
+                            raise ValueError(name + " 必须为 0 或 1")
+                        return value == "1"
+                    favorites = personal.favorites()
+                    include_uncertain = flag("include_uncertain")
+                    if source_arg == "all" and (url.path == "/api/favorites" or flag("favorites")):
+                        sources = list(dict.fromkeys(sources + [row["source"] for row in favorites]))
+                    result = search_jobs(sources, selector, ranker, cache, favorites,
+                        only_favorites=url.path == "/api/favorites" or flag("favorites"),
+                        include_uncertain="include_uncertain" in query or include_uncertain)
+                    if "include_uncertain" in query and not include_uncertain:
+                        result["jobs"] = [j for j in result["jobs"] if j["match_state"] == "matched"]
+                        result.update(total=len(result["jobs"]), uncertain_count=0)
+                    jobs = result["jobs"]
+                    result["source"] = source if "sources" not in query else source_arg
                     if url.path == "/api/export":
                         fmt = query.get("format", ["json"])[0]
                         if fmt not in ("csv", "json"):
                             raise ValueError("format 必须为 json 或 csv")
                         if fmt == "csv":
                             return self.send(200, export_csv(jobs), "text/csv; charset=utf-8", "jobs.csv")
-                        return self.send(200, {"selector": selector, "ranker": ranker, "snapshot": {k: v for k, v in snapshot.items() if k != "jobs"}, "jobs": jobs}, filename="jobs.json")
-                    return self.send(200, {"total": len(jobs), "source": source, "ranker": ranker, "jobs": jobs})
+                        result["snapshot"] = result["snapshots"][0] if len(result["snapshots"]) == 1 else {"sources": result["snapshots"]}
+                        return self.send(200, result, filename="jobs.json")
+                    offset, limit = int(query.get("offset", ["0"])[0]), int(query.get("limit", [str(max(1, len(jobs)))])[0])
+                    if offset < 0 or limit < 1 or ("limit" in query and limit > 200):
+                        raise ValueError("offset 应不小于 0，limit 应为 1–200")
+                    result.update(jobs=jobs[offset:offset+limit], offset=offset, has_more=offset+limit < len(jobs))
+                    return self.send(200, result)
                 self.send(404, {"error": "路径不存在"})
             except ValueError as exc:
                 self.send(400, {"error": str(exc)})
-            except OSError as exc:
+            except (OSError, sqlite3.Error) as exc:
                 self.send(500, {"error": str(exc)})
 
         def do_POST(self):
             nonlocal pdd_thread
-            if self.path not in ("/api/crawl", "/api/sources/preview", "/api/sources/custom", "/api/templates/match"):
+            if self.path not in ("/api/crawl", "/api/sources/preview", "/api/sources/custom", "/api/templates/match",
+                                  "/api/intents", "/api/intents/delete", "/api/favorites"):
                 return self.send(404, {"error": "路径不存在"})
             # Only the local same-origin UI can start a crawl through the browser.
             origin = self.headers.get("Origin")
@@ -163,6 +198,25 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                 body = json.loads(self.rfile.read(size))
                 if not isinstance(body, dict):
                     raise ValueError("请求体必须为 JSON 对象")
+                if self.path == "/api/intents":
+                    return self.send(200, personal.save_intent(body))
+                if self.path == "/api/intents/delete":
+                    personal.delete_intent(body.get("id"))
+                    return self.send(200, {"deleted": True})
+                if self.path == "/api/favorites":
+                    saved = body.get("saved")
+                    source, ident = body.get("source"), body.get("id")
+                    if not isinstance(saved, bool) or not isinstance(source, str) or not isinstance(ident, str):
+                        raise ValueError("收藏需要 source、id 和布尔值 saved")
+                    if saved:
+                        snapshot = load_cache(cache_path(source, cache), source)
+                        job = next((j for j in snapshot["jobs"] if j["id"] == ident), None)
+                        if job is None:
+                            raise ValueError("职位已不在当前列表，请刷新后重试")
+                        personal.favorite(source, ident, enrich_job(job, snapshot))
+                    else:
+                        personal.favorite(source, ident)
+                    return self.send(200, {"saved": saved, "source": source, "id": ident})
                 if self.path == "/api/templates/match":
                     return self.send(200, resolve_template(body.get("url"), read_configs(custom_path)))
                 if self.path != "/api/crawl":
@@ -203,6 +257,8 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                         registered.adaptation = adapter.adaptation
                         snapshot = crawl(source=registered.id, max_pages=1, fetch=lambda page: preview)
                         snapshot["acquisition"] = "provided_document"
+                        stamp_snapshot(snapshot, load_cache(cache_path(registered.id, cache), registered.id),
+                            ledger=Path(cache).parent / "observations.sqlite3")
                         save_cache(snapshot, cache_path(registered.id, cache))
                         with lock:
                             state.update(running=False, progress=None)
@@ -235,7 +291,7 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                     with lock:
                         state.update(running=False, error=str(exc))
                 self.send(400, {"error": str(exc)})
-            except OSError as exc:
+            except (OSError, sqlite3.Error) as exc:
                 if reserved:
                     with lock:
                         state.update(running=False, error=str(exc))

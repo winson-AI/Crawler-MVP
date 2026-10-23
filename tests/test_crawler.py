@@ -279,10 +279,17 @@ class ServerTests(unittest.TestCase):
             request = Request(self.url + "/api/crawl", data=b'{}', headers={"Content-Type": "application/json"})
             with urlopen(request) as response:
                 self.assertEqual(response.status, 202)
-            # Joining the worker gives deterministic evidence of the failure state.
-            for worker in threading.enumerate():
-                if worker is not self.thread and worker.name.endswith("(refresh)"):
-                    worker.join(timeout=2)
+            # Python versions name threads differently. Keep the upstream mock
+            # active until the server explicitly reports completion.
+            deadline = time.monotonic() + 3
+            while True:
+                with urlopen(self.url + "/api/status") as response:
+                    status = json.load(response)
+                if not status["running"]:
+                    break
+                if time.monotonic() >= deadline:
+                    self.fail("刷新失败状态未在期限内提交")
+                threading.Event().wait(0.01)
         self.assertEqual(before, self.cache.read_bytes())
         with urlopen(self.url + "/api/status") as response:
             self.assertEqual(json.load(response)["error"], "upstream unavailable")

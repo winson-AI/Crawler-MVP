@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache
+from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache, stamp_snapshot
 from .rankers import DEFAULT_RANKER, publication_time, rank_jobs
 from .selectors import select_jobs, validate_selector
 from .sources import get_source, list_sources
@@ -126,6 +126,8 @@ def sync_jobs(sources=None, state_path=DEFAULT_STATE, cache=DEFAULT_CACHE,
                     defer_details=source == "pinduoduo" and pdd_details == "defer")
                 if not snapshot["complete"]:
                     raise RuntimeError("抓取未完成，保留旧缓存和历史")
+                snapshot = stamp_snapshot(snapshot, load_cache(checkpoint / "before.json", source),
+                    ledger=state_path.parent / "observations.sqlite3", known_ids=seen)
                 discovered = {}
                 for job in snapshot["jobs"]:
                     if job["source"] != source or not str(job["id"]):
