@@ -8,11 +8,10 @@ from zoneinfo import ZoneInfo
 from .crawler import DEFAULT_CACHE, save_cache
 from .discovery import search_jobs, enrich_job
 from .incremental import content_hash
-from .personal import PersonalStore, validate_digest, INTENT_SCOPE
+from .personal import PersonalStore, validate_digest, INTENT_SCOPE, matching_scope
 from .rankers import rank_jobs, publication_time
-
-CONTENT_FIELDS = ("id", "source", "title", "company", "url", "locations", "requirements", "description",
-                  "published_at", "updated_at", "category", "department", "recruitment_type", "experience", "technologies", "details_pending")
+from .fields import field_changes
+from .selectors import explain_match
 
 
 def refresh_intent(store, intent, cache):
@@ -40,20 +39,22 @@ def refresh_intent(store, intent, cache):
             db.execute("UPDATE inbox SET current=0 WHERE intent=? AND source=?", (intent["id"], source))
             for job in (j for j in jobs if j["source"] == source):
                 key = (intent["id"], source, job["id"])
-                fingerprint = content_hash({**{k: job.get(k) for k in CONTENT_FIELDS}, "details_pending": bool(job.get("details_pending"))})
-                old = db.execute("SELECT hash, version FROM inbox WHERE intent=? AND source=? AND id=?", key).fetchone()
+                fingerprint = content_hash(job, ignore_metadata=True)
+                old = db.execute("SELECT hash, version, payload FROM inbox WHERE intent=? AND source=? AND id=?", key).fetchone()
                 payload = json.dumps(job, ensure_ascii=False)
                 if not old:
                     kind = "baseline" if baseline else "new"
                     db.execute("INSERT INTO inbox VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                                (*key, payload, fingerprint, 1, int(baseline), int(baseline), kind, now, 1))
                     changes[kind] += 1
-                elif old[0] != fingerprint:
+                elif content_hash(json.loads(old[2]), ignore_metadata=True) != fingerprint:
+                    differences = field_changes(json.loads(old[2]), job)
+                    db.execute("INSERT OR REPLACE INTO inbox_changes VALUES (?,?,?,?,?)", (*key, old[1] + 1, json.dumps(differences, ensure_ascii=False)))
                     db.execute("UPDATE inbox SET payload=?, hash=?, version=version+1, kind='updated', changed_at=?, current=1 WHERE intent=? AND source=? AND id=?",
                                (payload, fingerprint, now, *key))
                     changes["updated"] += 1
                 else:
-                    db.execute("UPDATE inbox SET payload=?, current=1 WHERE intent=? AND source=? AND id=?", (payload, *key))
+                    db.execute("UPDATE inbox SET payload=?, hash=?, current=1 WHERE intent=? AND source=? AND id=?", (payload, fingerprint, *key))
             db.execute("INSERT OR REPLACE INTO inbox_sources VALUES (?,?,?)", (intent["id"], source, observed))
             pending.discard(source)
         if pending != set(current.get("baseline_sources", [])):
@@ -70,7 +71,7 @@ def preview_intent(store, body, cache):
     keys = {(j["source"], j["id"]) for j in matches}
     with store.connect() as db:
         rows = db.execute("SELECT source,id,version,read_version,current FROM inbox WHERE intent=?", (proposed["id"],)).fetchall()
-    return {"scope_changed": bool(old) and any(old[k] != proposed[k] for k in INTENT_SCOPE),
+    return {"scope_changed": bool(old) and matching_scope(old) != matching_scope(proposed),
             "expected_revision": old.get("revision", 0) if old else 0,
             "matching": len(keys), "uncertain": sum(j["match_state"] == "uncertain" for j in matches),
             "newly_matching": len(keys - {(r[0], r[1]) for r in rows if r[4]}),
@@ -90,6 +91,7 @@ def read_inbox(store, ident, state="unread", current_only=False):
         raise ValueError("收件箱状态必须为 all/unread/read/updated")
     with store.connect() as db:
         rows = db.execute("SELECT payload,version,read_version,kind,changed_at,current FROM inbox WHERE intent=?", (ident,)).fetchall()
+        diffs = {(s, i, v): json.loads(p) for s, i, v, p in db.execute("SELECT source,id,version,payload FROM inbox_changes WHERE intent=?", (ident,))}
     favorites = {(r["source"], r["id"]): r for r in store.favorites()}
     jobs = []
     for payload, version, read_version, kind, changed_at, current in rows:
@@ -99,6 +101,8 @@ def read_inbox(store, ident, state="unread", current_only=False):
         job = enrich_job(job, {}, favorites.get((job["source"], job["id"])), archived=not current)
         job.update(inbox_version=version, read_state="read" if read_version >= version else "unread",
                    change_kind=kind, changed_at=changed_at, currently_matching=bool(current), intent_name=intent["name"])
+        job = explain_match(job, intent["selector"])
+        job["field_changes"] = diffs.get((job["source"], job["id"], version), [])
         jobs.append(job)
     counts = {"unread": sum(j["read_state"] == "unread" for j in jobs),
               "read": sum(j["read_state"] == "read" for j in jobs),
@@ -135,7 +139,8 @@ def generate_digest(store, intent_id, directory, now=None, excluded_sources=()):
             job = json.loads(payload)
             if kind == "updated" and not config["include_updates"] or job["match_state"] == "uncertain" and not config["include_uncertain"]:
                 continue
-            entries.append({"source": source, "id": ident, "version": version, "kind": kind,
+            diff_row = db.execute("SELECT payload FROM inbox_changes WHERE intent=? AND source=? AND id=? AND version=?", (intent_id, source, ident, version)).fetchone()
+            entries.append({"field_changes": json.loads(diff_row[0]) if diff_row else [], "source": source, "id": ident, "version": version, "kind": kind,
                             "title": job["title"], "company": job["company"], "url": job["url"],
                             "match_state": job["match_state"], "last_seen_at": job.get("last_seen_at")})
         if not entries:

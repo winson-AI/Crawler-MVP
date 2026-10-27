@@ -31,6 +31,13 @@ def validate_digest(value):
     return result
 
 
+def matching_scope(intent):
+    selector = validate_selector(intent.get("selector", {}))
+    selector.pop("preferences", None)
+    return {"sources": sorted(intent.get("sources", [])), "selector": selector,
+            "include_uncertain": intent.get("include_uncertain", True)}
+
+
 class PersonalStore:
     def __init__(self, path):
         self.path = Path(path)
@@ -39,6 +46,7 @@ class PersonalStore:
             db.execute("CREATE TABLE IF NOT EXISTS intents (id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS favorites (source TEXT, id TEXT, payload TEXT NOT NULL, PRIMARY KEY(source,id))")
             db.execute("CREATE TABLE IF NOT EXISTS inbox (intent TEXT, source TEXT, id TEXT, payload TEXT NOT NULL, hash TEXT NOT NULL, version INTEGER NOT NULL, read_version INTEGER NOT NULL, notified_version INTEGER NOT NULL, kind TEXT NOT NULL, changed_at TEXT NOT NULL, current INTEGER NOT NULL, PRIMARY KEY(intent,source,id))")
+            db.execute("CREATE TABLE IF NOT EXISTS inbox_changes (intent TEXT, source TEXT, id TEXT, version INTEGER, payload TEXT NOT NULL, PRIMARY KEY(intent,source,id,version))")
             db.execute("CREATE TABLE IF NOT EXISTS inbox_sources (intent TEXT, source TEXT, observed REAL NOT NULL, PRIMARY KEY(intent,source))")
             db.execute("CREATE TABLE IF NOT EXISTS applications (source TEXT, id TEXT, payload TEXT NOT NULL, PRIMARY KEY(source,id))")
             db.execute("CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, intent TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL, read INTEGER NOT NULL DEFAULT 0)")
@@ -72,11 +80,14 @@ class PersonalStore:
         uncertain = body.get("include_uncertain", True)
         if not isinstance(uncertain, bool):
             raise ValueError("include_uncertain 必须为布尔值")
+        collapse = body.get("collapse_duplicates", False)
+        if not isinstance(collapse, bool):
+            raise ValueError("collapse_duplicates 必须为布尔值")
         ident = body.get("id") or uuid.uuid4().hex
         if not isinstance(ident, str) or len(ident) > 80:
             raise ValueError("意向 ID 无效")
         payload = {"id": ident, "name": name.strip(), "sources": list(dict.fromkeys(sources)),
-                   "selector": selector, "ranker": ranker, "include_uncertain": uncertain,
+                   "selector": selector, "ranker": ranker, "collapse_duplicates": collapse, "include_uncertain": uncertain,
                    "updated_at": datetime.now(timezone.utc).isoformat()}
         return payload
 
@@ -103,7 +114,7 @@ class PersonalStore:
             if not exists and db.execute("SELECT count(*) FROM intents").fetchone()[0] >= 50:
                 raise ValueError("最多保存 50 个求职意向")
             payload["revision"] = revision + 1
-            changed = bool(old) and any(old.get(k) != payload[k] for k in INTENT_SCOPE)
+            changed = bool(old) and matching_scope(old) != matching_scope(payload)
             payload["baseline_sources"] = old.get("baseline_sources", [])
             if old.get("previous_settings"):
                 payload["previous_settings"] = old["previous_settings"]
@@ -112,6 +123,7 @@ class PersonalStore:
                 payload["baseline_sources"] = payload["sources"][:]
                 db.execute("UPDATE inbox SET current=0 WHERE intent=?", (ident,))
             if mode == "restart":
+                db.execute("DELETE FROM inbox_changes WHERE intent=?", (ident,))
                 db.execute("DELETE FROM inbox WHERE intent=?", (ident,))
                 db.execute("DELETE FROM inbox_sources WHERE intent=?", (ident,))
                 payload.pop("previous_settings", None)
@@ -144,6 +156,7 @@ class PersonalStore:
         if not isinstance(ident, str):
             raise ValueError("意向 ID 无效")
         with self.connect() as db:
+            db.execute("DELETE FROM inbox_changes WHERE intent=?", (ident,))
             db.execute("DELETE FROM intents WHERE id=?", (ident,))
             db.execute("DELETE FROM inbox WHERE intent=?", (ident,))
             db.execute("DELETE FROM inbox_sources WHERE intent=?", (ident,))

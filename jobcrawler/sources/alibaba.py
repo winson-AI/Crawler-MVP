@@ -2,6 +2,7 @@ import re
 from urllib.parse import urlencode
 
 from ..models import build_job
+from ..fields import source_fields
 from .base import JobPage
 from .common import HttpClient, iso_date, plain_text, require_list
 
@@ -15,6 +16,7 @@ def normalize_job(raw):
         experience = {"min": low, "max": high, "source": "structured",
                       "evidence": f"{low}–{high}年" if low is not None and high is not None else f"{low}年以上" if low is not None else f"{high}年以下"}
     return build_job(
+        **source_fields(raw),
         id=job_id, title=raw.get("name"), source="alibaba", company="阿里巴巴集团",
         url=f"https://talent.alibaba.com/off-campus/position-detail?positionId={job_id}",
         locations=raw.get("workLocations") or [], requirements=plain_text(raw.get("requirement")),

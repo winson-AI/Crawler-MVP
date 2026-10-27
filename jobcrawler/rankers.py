@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-RANKERS = ("published_desc", "published_asc", "experience_asc", "experience_desc")
+RANKERS = ("published_desc", "published_asc", "experience_asc", "experience_desc", "relevance_desc")
 DEFAULT_RANKER = "published_desc"
 
 
@@ -15,9 +15,16 @@ def publication_time(value):
 
 
 def rank_jobs(jobs, ranker=DEFAULT_RANKER):
-    """Stable single-key ranking. Missing dates/experience always come last."""
+    """Stable ranking; relevance ties prefer evidence, then publication time."""
     if ranker not in RANKERS:
         raise ValueError(f"未知 ranker {ranker!r}；可选：{', '.join(RANKERS)}")
+    if ranker == "relevance_desc":
+        def publication_key(job):
+            value = publication_time(job.get("published_at"))
+            return -value if value is not None else float("inf")
+        return sorted(jobs, key=lambda j: (-(j.get("match_score") if j.get("match_score") is not None else -1),
+            sum(c["status"] == "unknown" for c in j.get("preference_explanation", [])),
+            publication_key(j), j.get("source", ""), str(j.get("id", ""))))
     known, unknown = [], []
     for job in jobs:
         value = publication_time(job.get("published_at")) if ranker.startswith("published_") else job["experience"]["min"]

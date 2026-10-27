@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlsplit
 
+from .grouping import collapse_result
 from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache, stamp_snapshot
 from .discovery import search_jobs, enrich_job
 from .personal import PersonalStore
@@ -175,6 +176,10 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                         raise ValueError("current 必须为 0 或 1")
                     result = read_inbox(personal, ident, query.get("state", ["unread"])[0], current_only=current == "1")
                     result["source_errors"] = changes["source_errors"]
+                    collapse = query.get("collapse_duplicates", ["1" if intent.get("collapse_duplicates") else "0"])[0]
+                    if collapse not in ("0", "1"):
+                        raise ValueError("collapse_duplicates 必须为 0 或 1")
+                    collapse_result(result, collapse == "1")
                     if url.path.endswith("/export"):
                         fmt = query.get("format", ["json"])[0]
                         if fmt == "csv":
@@ -233,6 +238,8 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                         favorite_keys = {(f["source"], f["id"]) for f in personal.favorites()}
                         jobs = [{**j, "favorite": (j["source"], j["id"]) in favorite_keys} for j in jobs]
                     result["jobs"] = jobs
+                    collapse_result(result, flag("collapse_duplicates"))
+                    jobs = result["jobs"]
                     result["source"] = source if "sources" not in query else source_arg
                     if url.path == "/api/export":
                         fmt = query.get("format", ["json"])[0]

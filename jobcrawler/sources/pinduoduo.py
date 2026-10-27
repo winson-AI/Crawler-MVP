@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from urllib.parse import urlencode, urlsplit
 
 from ..models import build_job
+from ..fields import source_fields
 from .base import JobPage
 from .browser import BrowserSource
 from .common import iso_date, locations, plain_text, require_list
@@ -11,6 +12,7 @@ from ..verification import VerificationRequired
 
 def normalize_job(raw):
     return build_job(
+        **source_fields(raw),
         id=raw.get("code"), title=raw.get("name"), source="pinduoduo", company="拼多多集团",
         url="https://careers.pddglobalhr.com/jobs/detail?" + urlencode({"code": raw.get("code") or ""}),
         locations=locations(raw.get("workLocation")), requirements=plain_text(raw.get("serveRequirement")),

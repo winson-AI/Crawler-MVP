@@ -7,6 +7,7 @@ import sqlite3
 from contextlib import nullcontext, closing
 from datetime import datetime, timezone
 from pathlib import Path
+from .fields import normalize_fields
 from .selectors import job_recruitment_type
 from .sources import get_source
 
@@ -128,6 +129,7 @@ def load_cache(path=DEFAULT_CACHE, source="baidu"):
         snapshot.setdefault("source_name", adapter.name)
         # Old snapshots lack publication dates: never infer them from updated_at.
         for job in snapshot["jobs"]:
+            job.update(normalize_fields(job))
             job.setdefault("published_at", "")
             job["recruitment_type"] = job_recruitment_type(job, snapshot.get("source_url", adapter.url))
         return snapshot
@@ -141,16 +143,24 @@ def export_csv(jobs):
     fields = ["id", "title", "source", "company", "locations", "experience_min", "experience_max", "experience_evidence",
               "technologies", "department", "category", "recruitment_type", "published_at", "updated_at", "url", "requirements", "description", "details_pending",
               "first_seen_at", "last_seen_at", "details_fetched_at", "match_state", "uncertainty_reasons", "favorite", "freshness_status",
-              "intent_name", "change_kind", "read_state", "inbox_version", "changed_at", "application_status", "application_notes"]
+              "intent_name", "change_kind", "read_state", "inbox_version", "changed_at", "application_status", "application_notes", "salary_raw", "salary_min", "salary_max", "salary_currency", "salary_period", "pay_months",
+              "education", "office_mode", "employment_type", "field_evidence", "match_score", "score_basis", "hard_explanation", "preference_explanation", "field_changes", "duplicate_group", "duplicate_count"]
     writer = csv.DictWriter(stream, fieldnames=fields)
     writer.writeheader()
-    for job in jobs:
-        row = {key: job.get(key, "") for key in fields}
-        row.update(locations=", ".join(job["locations"]), technologies=", ".join(job["technologies"]),
-                   experience_min=job["experience"]["min"], experience_max=job["experience"]["max"],
-                   experience_evidence=job["experience"]["evidence"])
-        row["uncertainty_reasons"] = "；".join(job.get("uncertainty_reasons", []))
-        # Avoid spreadsheet formula execution when opening text from remote postings.
-        writer.writerow({key: "'" + value if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@"))
-                         else value for key, value in row.items()})
+    for representative in jobs:
+        for original in representative.get("duplicate_jobs", [representative]):
+            job = {**original, **normalize_fields(original), "duplicate_group": representative.get("duplicate_group", ""), "duplicate_count": representative.get("duplicate_count", 1)}
+            row = {key: job.get(key, "") for key in fields}
+            row.update(locations=", ".join(job["locations"]), technologies=", ".join(job["technologies"]),
+                       experience_min=job["experience"]["min"], experience_max=job["experience"]["max"],
+                       experience_evidence=job["experience"]["evidence"])
+            salary = job["salary"]
+            row.update(salary_raw=salary["raw"], salary_min=salary["min"], salary_max=salary["max"],
+                       salary_currency=salary["currency"], salary_period=salary["period"], pay_months=salary["pay_months"])
+            for key in ("education", "field_evidence", "hard_explanation", "preference_explanation", "field_changes"):
+                row[key] = json.dumps(job.get(key, []), ensure_ascii=False)
+            row["uncertainty_reasons"] = "；".join(job.get("uncertainty_reasons", []))
+            # Avoid spreadsheet formula execution when opening text from remote postings.
+            writer.writerow({key: "'" + value if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@"))
+                             else value for key, value in row.items()})
     return "\ufeff" + stream.getvalue()

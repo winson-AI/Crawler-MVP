@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .crawler import PaginationError, load_cache, save_cache
 from .selectors import job_recruitment_type
+from .fields import comparable_job, normalize_fields
 from .sources import get_source
 from .sources.base import JobPage
 from .verification import record_verification
@@ -20,10 +21,12 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def content_hash(job, source_url=""):
+def content_hash(job, source_url="", ignore_metadata=False):
     normalized = {**job, "recruitment_type": job_recruitment_type(job, source_url)}
-    return digest({k: v for k, v in normalized.items() if k not in
-        ("matches", "first_seen_at", "last_seen_at", "details_fetched_at")})
+    content = comparable_job(normalized)
+    if not ignore_metadata:
+        content["updated_at"] = job.get("updated_at", "")
+    return digest(content)
 
 
 def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.4,
@@ -138,7 +141,10 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                     entry = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
                     if entry and (entry.get("source_id") != source or str(entry["job"]["id"]) != job_id or entry["job"]["source"] != source):
                         raise ValueError("详情缓存身份不一致")
-                    if entry and entry["listing_hash"] == signature:
+                    cached_job = entry.get("listing_facts", entry["job"]) if entry else old or {}
+                    facts_changed = any(summary.get(k + "_raw") and summary[k + "_raw"] != cached_job.get(k + "_raw")
+                                        for k in ("salary", "education", "office_mode", "employment_type"))
+                    if entry and entry["listing_hash"] == signature and not facts_changed:
                         job = {**entry["job"], "details_fetched_at": entry["job"].get("details_fetched_at")}
                         stats["detail_cache_hits"] += 1
                     else:
@@ -146,12 +152,13 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                         # details. Only compare fields actually present in the list.
                         fields = [k for k in LIST_FIELDS if summary.get(k)]
                         unchanged_legacy = old and not old.get("details_pending") and digest({k: old.get(k) for k in fields}) == digest({k: summary.get(k) for k in fields})
-                        if not entry and unchanged_legacy:
+                        if not entry and unchanged_legacy and not facts_changed:
                             job = {**old, "details_fetched_at": old.get("details_fetched_at")}
                             stats["legacy_cache_hits"] += 1
                         elif defer_details:
                             cached = entry["job"] if entry else old
                             job = {**(cached or summary), **{k: summary[k] for k in LIST_FIELDS if k in summary},
+                                   **{k + "_raw": summary[k + "_raw"] for k in ("salary", "education", "office_mode", "employment_type") if summary.get(k + "_raw")},
                                    "details_pending": True}
                             stats["details_deferred"] += 1
                         else:
@@ -160,17 +167,22 @@ def collect_incremental(source, previous, directory, details, crawl_fn, delay=0.
                                 time.sleep(delay)
                             stats["detail_requests"] += 1
                             job = adapter.fetch_job_detail(summary)
+                            # Detail endpoints may omit facts published only in the list.
+                            for key in ("salary", "education", "office_mode", "employment_type"):
+                                if summary.get(key + "_raw") and not job.get(key + "_raw"):
+                                    job[key + "_raw"] = summary[key + "_raw"]
                             job["details_fetched_at"] = datetime.now(timezone.utc).isoformat()
                         if job["source"] != source or str(job["id"]) != job_id:
                             raise ValueError("详情 ID 与列表不一致")
                         if not job.get("details_pending"):
-                            save_cache({"source_id": source, "listing_hash": signature, "job": job}, path)
+                            save_cache({"source_id": source, "listing_hash": signature, "job": job,
+                                        "listing_facts": {k + "_raw": summary.get(k + "_raw") for k in ("salary", "education", "office_mode", "employment_type")}}, path)
                     if old is None and entry:
                         old = entry["job"]
                 else:
                     job = summary
                     stats["embedded_details"] += 1
-                job = {**job, "recruitment_type": job_recruitment_type(job, adapter.url)}
+                job = {**job, **normalize_fields(job), "recruitment_type": job_recruitment_type(job, adapter.url)}
                 if old and content_hash(old, adapter.url) != content_hash(job, adapter.url):
                     updated.append(job_id)
                 jobs.append(job)

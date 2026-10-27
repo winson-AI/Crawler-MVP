@@ -1,10 +1,12 @@
 from ..models import build_job
+from ..fields import source_fields
 from .base import JobPage
 from .common import HttpClient, iso_date, locations, plain_text
 
 
 def normalize_job(raw):
     return build_job(
+        **source_fields(raw),
         id=raw.get("id") or raw.get("requirementId"), title=raw.get("positionNameOpen") or raw.get("positionName"),
         source="jd", company="京东", url=JdSource.url,
         locations=locations(raw.get("workCity")), requirements=plain_text(raw.get("qualification")),

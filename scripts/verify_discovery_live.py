@@ -72,7 +72,7 @@ def main():
         for ranker in RANKERS:
             q = {**query, "ranker": ranker}
             found = request("/api/jobs", q)
-            values = [publication_time(j.get("published_at")) if ranker.startswith("published") else j["experience"]["min"] for j in found["jobs"]]
+            values = [publication_time(j.get("published_at")) if ranker.startswith("published") or ranker == "relevance_desc" else j["experience"]["min"] for j in found["jobs"]]
             known = [v for v in values if v is not None]
             assert values == known + [None] * (len(values) - len(known))
             assert known == sorted(known, reverse=ranker.endswith("desc"))

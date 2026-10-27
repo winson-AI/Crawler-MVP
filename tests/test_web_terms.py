@@ -77,6 +77,22 @@ restore({});if(selector().recruitment_type!=='all')throw Error('reset/legacy');
         completed = subprocess.run(['node', '-e', script], capture_output=True, text=True)
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
+    def test_hard_and_preference_restore_does_not_move_other_conditions(self):
+        html = (Path(__file__).resolve().parents[1] / 'jobcrawler/web/index.html').read_text()
+        code = html[html.index('function splitTerms'):html.index('const esc =')]
+        code += html[html.index('function selector()'):html.index('function error(')]
+        code += html[html.index('function restore(s)'):html.index('async function status(')]
+        script = "const nodes={};const $=id=>nodes[id]||(nodes[id]={value:'',checked:false});" + code + """
+const saved={locations:['北京'],exclude_keywords:['销售'],preferences:{technologies:['Python'],technology_mode:'all',salary_min:30000,salary_currency:'CNY',salary_period:'month'}};
+restore(saved);const value=selector();
+if(JSON.stringify(value.locations)!=='["北京"]'||value.technologies||value.salary_min!==undefined)throw Error('conditions moved or duplicated');
+if(value.preferences.technologies[0]!=='Python'||value.preferences.salary_min!==30000||value.exclude_keywords[0]!=='销售')throw Error('preference/exclusions lost');
+restore(value);if($('locations-strength').value!=='hard'||$('tech-strength').value!=='prefer')throw Error('strength lost');
+restore({});if(Object.keys(selector().preferences).length)throw Error('reset kept preferences');
+"""
+        completed = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_quoted_conditions_and_restore_roundtrip(self):
         html = (Path(__file__).resolve().parents[1] / 'jobcrawler/web/index.html').read_text()
         functions = html[html.index('function splitTerms'):html.index('const esc =')]

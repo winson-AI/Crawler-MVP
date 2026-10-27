@@ -18,6 +18,7 @@ from jobcrawler.crawler import cache_path, load_cache, save_cache
 from jobcrawler.rankers import RANKERS, publication_time
 from jobcrawler.server import make_server
 from jobcrawler.sync import sync_jobs
+from jobcrawler.fields import field_changes
 
 SOURCES = ["baidu", "alibaba", "tencent", "meituan", "bytedance", "jd", "pinduoduo"]
 
@@ -25,6 +26,7 @@ SOURCES = ["baidu", "alibaba", "tencent", "meituan", "bytedance", "jd", "pinduod
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--before", type=Path, required=True, help="真实历史运行的 checkpoints 目录")
+    parser.add_argument("--matching", action="store_true", help="验证硬条件/偏好、新字段、疑似重复折叠和字段差异")
     parser.add_argument("--live-baidu", action="store_true", help="隔离执行百度全量列表增量同步")
     parser.add_argument("--health-report", type=Path, help="回放已有真实同步报告，仅将缓存路径映射到验收目录")
     parser.add_argument("--output", type=Path, default=Path("output") / ("product-live-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")))
@@ -91,7 +93,7 @@ def main():
                 exported = request("/api/inbox/export", q)
                 a, b = request("/api/inbox", {**q, "limit": 30}), request("/api/inbox", {**q, "limit": 30, "offset": 30})
                 assert a["jobs"] + b["jobs"] == exported["jobs"][:60]
-                values = [publication_time(j.get("published_at")) if ranker.startswith("published") else j["experience"]["min"] for j in exported["jobs"]]
+                values = [publication_time(j.get("published_at")) if ranker.startswith("published") or ranker == "relevance_desc" else j["experience"]["min"] for j in exported["jobs"]]
                 known = [v for v in values if v is not None]
                 assert values == known + [None] * (len(values) - len(known))
                 assert known == sorted(known, reverse=ranker.endswith("desc"))
@@ -181,6 +183,57 @@ def main():
                 "sha256": hashlib.sha256(args.health_report.read_bytes()).hexdigest(), "summary": health["latest_run"],
                 "manual_source_modes_distinguished": True}
             save_cache(health, args.output / "health-replay.json")
+        if args.matching:
+            preferences = {"locations": ["北京"], "technologies": ["Python"], "education": "bachelor", "office_modes": ["remote"], "salary_min": 30000}
+            query = {"sources": ",".join(SOURCES), "selector": json.dumps({"preferences": preferences}), "ranker": "relevance_desc", "include_uncertain": 1}
+            ranked = request("/api/export", query)
+            assert len(ranked["jobs"]) == sum(v["after_count"] for v in report["sources"].values())
+            scores = [j["match_score"] for j in ranked["jobs"]]
+            assert scores == sorted(scores, reverse=True)
+            for job in ranked["jobs"]:
+                checks = job["preference_explanation"]
+                assert job["match_score"] == round(100 * sum(c["status"] == "matched" for c in checks) / len(checks), 2)
+            hard = request("/api/export", {**query, "selector": json.dumps(preferences)})
+            assert all(not any(c["status"] == "unmet" for c in j["hard_explanation"]) for j in hard["jobs"])
+            folded = request("/api/export", {**query, "collapse_duplicates": 1})
+            raw_keys = [(j["source"], j["id"]) for j in ranked["jobs"]]
+            members = [m for j in folded["jobs"] for m in j.get("duplicate_jobs", [j])]
+            assert sorted(raw_keys) == sorted((j["source"], j["id"]) for j in members)
+            csv_data = request("/api/export", {**query, "collapse_duplicates": 1, "format": "csv"}, raw=True)
+            rows = list(csv.DictReader(io.StringIO(csv_data.decode("utf-8-sig"))))
+            assert [(r["source"], r["id"]) for r in rows] == [(j["source"], j["id"]) for j in members]
+            assert all("field_evidence" in r and "match_score" in r for r in rows)
+            save_cache(folded, args.output / "matching.json")
+            (args.output / "matching.csv").write_bytes(csv_data)
+            coverage = {}
+            for source in SOURCES:
+                js = [j for j in ranked["jobs"] if j["source"] == source]
+                coverage[source] = {"total": len(js), "salary_range": sum(j["salary"]["min"] is not None or j["salary"]["max"] is not None for j in js),
+                    "education": sum(j["education"]["level"] is not None for j in js), "office_mode": sum(j["office_mode"] != "unknown" for j in js),
+                    "employment_type": sum(j["employment_type"] != "unknown" for j in js)}
+            updates = request("/api/inbox/export", {"intent_id": intents[0]["id"], "state": "updated"})
+            checked, diff_examples = 0, []
+            for source in SOURCES:
+                before_jobs = {j["id"]: j for j in load_cache(args.before / source / "before.json", source)["jobs"]}
+                after_jobs = {j["id"]: j for j in load_cache(cache_path(source, cache), source)["jobs"]}
+                for j in updates["jobs"]:
+                    if j["source"] != source or j["id"] not in before_jobs or j["id"] not in after_jobs:
+                        continue
+                    assert j["field_changes"] == field_changes(before_jobs[j["id"]], after_jobs[j["id"]])
+                    assert j["field_changes"]
+                    checked += 1
+                    if len(diff_examples) < 5:
+                        diff_examples.append({"source": source, "id": j["id"], "field_changes": j["field_changes"]})
+            assert checked > 0
+            save_cache({"checked": checked, "examples": diff_examples}, args.output / "field-changes.json")
+            saved = request("/api/intents", body={"name": "真实验收·偏好排序", "sources": SOURCES,
+                "selector": {"preferences": preferences}, "ranker": "relevance_desc", "collapse_duplicates": True})
+            restored = request("/api/inbox/export", {"intent_id": saved["id"], "state": "all"})
+            assert restored["total"] == folded["total"]
+            assert [(j["source"], j["id"], j["match_score"]) for j in restored["jobs"]] == [(j["source"], j["id"], j["match_score"]) for j in folded["jobs"]]
+            report["matching"] = {"raw_count": len(raw_keys), "folded_groups": folded["total"], "suspected_groups": sum(j.get("duplicate_count", 1) > 1 for j in folded["jobs"]),
+                "strict_and_uncertain_count": hard["total"], "field_coverage": coverage, "real_field_changes_checked": checked,
+                "json": str((args.output / "matching.json").resolve()), "csv": str((args.output / "matching.csv").resolve()), "saved_preferences": "passed"}
         if args.live_baidu:
             live = sync_jobs(sources=["baidu"], cache=cache, state_path=cache.parent / "sync-state.json", output=args.output / "output/incremental")
             report["live_baidu"] = {"report": live["report_path"], "result": live["sources"]["baidu"], "personal_updates": live["personal_updates"]}

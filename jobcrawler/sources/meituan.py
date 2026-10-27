@@ -1,4 +1,5 @@
 from ..models import build_job
+from ..fields import source_fields
 from .base import JobPage
 from .common import HttpClient, iso_date, plain_text, require_list
 
@@ -6,6 +7,7 @@ from .common import HttpClient, iso_date, plain_text, require_list
 def normalize_job(raw):
     job_id = str(raw.get("jobUnionId") or "")
     return build_job(
+        **source_fields(raw),
         id=job_id, title=raw.get("name"), source="meituan", company="美团",
         url=f"https://hr.meituan.com/web/position/detail?highlightType=social&jobUnionId={job_id}",
         locations=[city["name"] for city in raw.get("cityList") or []],

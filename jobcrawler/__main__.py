@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache, stamp_snapshot
 from .rankers import DEFAULT_RANKER, RANKERS, rank_jobs
 from .selectors import select_jobs
+from .grouping import collapse_jobs
 from .server import make_server
 from .sources import list_sources
 from .sync import DEFAULT_OUTPUT, DEFAULT_STATE, sync_jobs
@@ -58,6 +59,7 @@ def main():
     filter_parser.add_argument("--format", choices=["json", "csv"], default="json")
     filter_parser.add_argument("--output", type=Path)
     filter_parser.add_argument("--source", default="baidu", choices=[s["id"] for s in list_sources()])
+    filter_parser.add_argument("--collapse-duplicates", action="store_true")
     filter_parser.add_argument("--ranker", choices=RANKERS, default=DEFAULT_RANKER)
     serve_parser = sub.add_parser("serve", help="启动本地筛选页面")
     serve_parser.add_argument("--host", default="127.0.0.1")
@@ -104,6 +106,8 @@ def main():
             selector = json.loads(args.selector.read_text(encoding="utf-8"))
             snapshot = load_cache(path, args.source)
             jobs = rank_jobs(select_jobs(snapshot["jobs"], selector), args.ranker)
+            if args.collapse_duplicates:
+                jobs = collapse_jobs(jobs)
             output = export_csv(jobs) if args.format == "csv" else json.dumps(
                 {"selector": selector, "ranker": args.ranker, "snapshot": {k: v for k, v in snapshot.items() if k != "jobs"}, "jobs": jobs},
                 ensure_ascii=False, indent=2)

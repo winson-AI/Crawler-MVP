@@ -79,7 +79,7 @@ def verify_pipeline(snapshot, output):
             raise RuntimeError(f"{years} 年 selector 与结构化年限边界不一致")
     for ranker in RANKERS:
         ranked = rank_jobs(jobs, ranker)
-        values = [publication_time(job["published_at"]) if ranker.startswith("published_") else job["experience"]["min"] for job in ranked]
+        values = [publication_time(job["published_at"]) if ranker.startswith("published_") or ranker == "relevance_desc" else job["experience"]["min"] for job in ranked]
         known = [value for value in values if value is not None]
         if values != known + [None] * (len(values) - len(known)):
             raise RuntimeError("ranker 没有将未知值放到最后")

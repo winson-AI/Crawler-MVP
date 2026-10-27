@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlencode
 
 from ..models import build_job
+from ..fields import source_fields
 from .base import JobPage
 from .common import HttpClient, iso_date, locations, plain_text, require_list
 
@@ -10,6 +11,7 @@ from .common import HttpClient, iso_date, locations, plain_text, require_list
 def normalize_job(raw):
     job_id = str(raw.get("PostId") or "")
     return build_job(
+        **source_fields(raw),
         id=job_id, title=raw.get("RecruitPostName"), source="tencent", company="腾讯",
         url=f"https://careers.tencent.com/jobdesc.html?postId={job_id}",
         locations=locations(raw.get("LocationName")), requirements=plain_text(raw.get("Requirement")),

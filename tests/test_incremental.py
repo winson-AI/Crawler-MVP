@@ -86,6 +86,32 @@ class IncrementalTests(unittest.TestCase):
         self.assertEqual(repeated["acquisition"]["detail_cache_hits"], 3)
         self.assertEqual(repeated["acquisition"]["detail_requests"], 0)
 
+    def test_fact_change_in_listing_refreshes_only_changed_detail(self):
+        self.seed(self.adapter.jobs)
+        first = self.run_sync()
+        self.assertEqual(first["new_count"], 0)
+        self.assertEqual(self.adapter.detail_calls, [])
+        self.adapter.jobs[1] = {**self.adapter.jobs[1], "salary_raw": "月薪人民币 30-50k"}
+        changed = self.run_sync()
+        self.assertEqual(self.adapter.detail_calls, ["2"])
+        self.assertEqual(changed["updated_count"], 1)
+        self.assertEqual(self.run_sync()["updated_count"], 0)
+        self.assertEqual(self.adapter.detail_calls, ["2"])
+
+    def test_list_and_detail_fact_difference_does_not_refetch_forever(self):
+        original = self.adapter.fetch_list_page
+        def fetch(page):
+            result = original(page)
+            return JobPage(result.page, result.total, [{**j, "salary_raw": "月薪人民币 30-50k"} for j in result.jobs], has_more=result.has_more)
+        self.adapter.fetch_list_page = fetch
+        self.adapter.jobs = [{**j, "salary_raw": "月薪人民币 40-60k"} for j in self.adapter.jobs]
+        first = self.run_sync()
+        self.assertEqual(len(self.adapter.detail_calls), 3)
+        repeated = self.run_sync()
+        self.assertEqual(repeated["updated_count"], 0)
+        self.assertEqual(len(self.adapter.detail_calls), 3)
+        self.assertEqual(repeated["sources"]["tencent"]["acquisition"]["detail_cache_hits"], 3)
+
     def test_list_failure_resumes_pages_before_any_detail_request(self):
         self.adapter.fail_page = 2
         first = self.run_sync()

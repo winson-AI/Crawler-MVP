@@ -1,6 +1,7 @@
 from urllib.parse import urlencode
 
 from ..models import build_job
+from ..fields import source_fields
 from .base import JobPage
 from .browser import BrowserSource
 from .common import iso_date, plain_text, require_list
@@ -10,6 +11,7 @@ def normalize_job(raw):
     job_id = str(raw.get("id") or "")
     cities = raw.get("city_list") or ([raw["city_info"]] if raw.get("city_info") else [])
     return build_job(
+        **source_fields(raw),
         id=job_id, title=raw.get("title"), source="bytedance", company="字节跳动",
         url=f"https://jobs.bytedance.com/experienced/position/{job_id}/detail",
         locations=list(dict.fromkeys(city.get("i18n_name") or city.get("name") for city in cities)),

@@ -17,7 +17,7 @@ CONFIG_PATH = Path(__file__).resolve().parents[2] / "sources.local.json"
 MAX_DOCUMENT = 2 * 1024 * 1024
 FAKE_IP = ipaddress.ip_network("198.18.0.0/15")
 FIELDS = {"id", "title", "url", "company", "locations", "requirements", "description",
-          "published_at", "updated_at", "department", "category", "work_years", "recruitment_type"}
+          "published_at", "updated_at", "department", "category", "work_years", "recruitment_type", "salary", "education", "office_mode", "employment_type"}
 
 
 def public_url(value):
@@ -299,6 +299,8 @@ class CustomSource:
         values = {k: raw.get(k) for k in FIELDS}
         for key in FIELDS - {"locations"}:
             value = values[key]
+            if key == "salary" and isinstance(value, dict):
+                continue
             numeric = key in ("id", "published_at", "updated_at") and isinstance(value, (int, float)) and not isinstance(value, bool)
             if value is not None and not isinstance(value, str) and not numeric:
                 raise ValueError(f"职位字段 {key} 类型已变化，请适配到文本或正确的子字段")
@@ -420,7 +422,10 @@ class CustomSource:
                 raw_jobs.append({"id": identifier, "title": row.get("title"), "url": row.get("url") or (base if len(schema) == 1 else ""),
                     "company": company, "locations": names, "description": row.get("description") or row.get("responsibilities"),
                     "requirements": "\n".join(v for k in ("qualifications", "experienceRequirements", "skills")
-                                                if isinstance((v := row.get(k)), str)), "published_at": row.get("datePosted")})
+                                                if isinstance((v := row.get(k)), str)), "published_at": row.get("datePosted"), "salary": row.get("baseSalary"),
+                    "education": row.get("educationRequirements") if isinstance(row.get("educationRequirements"), str) else "",
+                    "office_mode": row.get("jobLocationType"),
+                    "employment_type": row.get("employmentType") if isinstance(row.get("employmentType"), str) else ""})
         elif data is not None and parser in ("auto", "json"):
             self.parser_used = "json"
             rows = path_value(data, self.config.get("items", ""))

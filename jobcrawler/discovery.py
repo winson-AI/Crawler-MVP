@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from .crawler import cache_path, load_cache
 from .rankers import rank_jobs, publication_time
 from .selectors import select_jobs
+from .fields import normalize_fields
 
 
 def enrich_job(job, snapshot, favorite=None, archived=False):
@@ -11,7 +12,7 @@ def enrich_job(job, snapshot, favorite=None, archived=False):
     timestamp = publication_time(observed)
     age = datetime.now(timezone.utc).timestamp() - timestamp if timestamp is not None else None
     freshness = "unknown" if age is None or age < 0 else "stale" if age > 72 * 3600 else "recent"
-    return {**job, "first_seen_at": job.get("first_seen_at"), "last_seen_at": observed,
+    return {**job, **normalize_fields(job), "first_seen_at": job.get("first_seen_at"), "last_seen_at": observed,
             "details_fetched_at": job.get("details_fetched_at"), "freshness_status": freshness,
             "observation_basis": job.get("observation_basis", "job" if job.get("last_seen_at") else "snapshot"),
             "source_name": snapshot.get("source_name", job.get("source_name", job["source"])),
