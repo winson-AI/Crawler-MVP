@@ -63,7 +63,7 @@ async function request(url){const query=new URLSearchParams(url.split('?')[1]);q
         selector = html[html.index('function selector()'):html.index('function error(')]
         restore = html[html.index('function restore(s)'):html.index('async function status(')]
         functions = html[html.index('function splitTerms'):html.index('const esc =')]
-        script = '''const nodes={};const $=id=>nodes[id]||(nodes[id]={value:'',checked:false});
+        script = '''const nodes={};const $=id=>nodes[id]||(nodes[id]={value:'',checked:false,querySelectorAll:()=>[]});
 ''' + functions + selector + restore + '''
 for(const kind of ['all','campus','social','unknown']){
  restore({recruitment_type:kind});
@@ -82,13 +82,39 @@ restore({});if(selector().recruitment_type!=='all')throw Error('reset/legacy');
         code = html[html.index('function splitTerms'):html.index('const esc =')]
         code += html[html.index('function selector()'):html.index('function error(')]
         code += html[html.index('function restore(s)'):html.index('async function status(')]
-        script = "const nodes={};const $=id=>nodes[id]||(nodes[id]={value:'',checked:false});" + code + """
+        script = "const nodes={};const $=id=>nodes[id]||(nodes[id]={value:'',checked:false,querySelectorAll:()=>[]});" + code + """
 const saved={locations:['北京'],exclude_keywords:['销售'],preferences:{technologies:['Python'],technology_mode:'all',salary_min:30000,salary_currency:'CNY',salary_period:'month'}};
 restore(saved);const value=selector();
 if(JSON.stringify(value.locations)!=='["北京"]'||value.technologies||value.salary_min!==undefined)throw Error('conditions moved or duplicated');
 if(value.preferences.technologies[0]!=='Python'||value.preferences.salary_min!==30000||value.exclude_keywords[0]!=='销售')throw Error('preference/exclusions lost');
 restore(value);if($('locations-strength').value!=='hard'||$('tech-strength').value!=='prefer')throw Error('strength lost');
 restore({});if(Object.keys(selector().preferences).length)throw Error('reset kept preferences');
+"""
+        completed = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_multiple_office_and_employment_values_survive_restore_and_reset(self):
+        html = (Path(__file__).resolve().parents[1] / 'jobcrawler/web/index.html').read_text()
+        self.assertIn('<fieldset id="office-modes">', html)
+        self.assertIn('<fieldset id="employment-types">', html)
+        code = html[html.index('function splitTerms'):html.index('const esc =')]
+        code += html[html.index('function selector()'):html.index('function error(')]
+        code += html[html.index('function restore(s)'):html.index('async function status(')]
+        script = """
+const nodes={};const $=id=>nodes[id]||(nodes[id]={value:'',checked:false,querySelectorAll:()=>[]});
+for(const [id,values] of [['office-modes',['onsite','hybrid','remote']],['employment-types',['full_time','part_time','intern','contract']]]){
+ const inputs=values.map(value=>({value,checked:false}));
+ nodes[id]={querySelectorAll:selector=>selector==='input:checked'?inputs.filter(input=>input.checked):inputs};
+}
+""" + code + """
+restore({office_modes:['remote','hybrid'],employment_types:['full_time','intern']});
+let value=selector();
+if(value.office_modes.join()!=='hybrid,remote'||value.employment_types.join()!=='full_time,intern')throw Error('hard multi-value conditions lost');
+restore({preferences:{office_modes:['remote','hybrid'],employment_types:['full_time','intern']}});
+value=selector();
+if(value.office_modes!==undefined||value.preferences.office_modes.join()!=='hybrid,remote'||value.preferences.employment_types.join()!=='full_time,intern')throw Error('preferences moved or lost');
+restore({});value=selector();
+if(value.office_modes.length||value.employment_types.length||Object.keys(value.preferences).length)throw Error('reset kept old conditions');
 """
         completed = subprocess.run(['node', '-e', script], capture_output=True, text=True)
         self.assertEqual(completed.returncode, 0, completed.stderr)

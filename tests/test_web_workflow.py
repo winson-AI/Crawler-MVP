@@ -18,6 +18,23 @@ class WebWorkflowTests(unittest.TestCase):
         result = subprocess.run(["node", "-e", code], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_matching_and_field_comparisons_render_readable_values_and_escape_text(self):
+        self.run_script(self.section("const esc =", "function trackingControls(") +
+            self.section("function jobValue(", "async function search(") + """
+const job={salary:{raw:''},education:{level:'bachelor'},office_mode:'hybrid',employment_type:'full_time',match_score:50,
+ preference_explanation:[{condition:'office_modes',label:'办公方式',requested:['remote','hybrid'],status:'matched',evidence:'混合办公'}],
+ field_evidence:{office_mode:{text:'混合办公',basis:'source'}},
+ field_changes:[{field:'office_mode',label:'办公方式',before:'onsite',after:'hybrid'},
+  {field:'education',label:'学历',before:{level:'bachelor'},after:{level:'master',preferred:'doctorate'}},
+  {field:'salary',label:'薪资',before:{raw:'面议'},after:{raw:'{"currency":"CNY"}',min:30000,max:50000,currency:'CNY',period:'month'}},
+  {field:'requirements',label:'任职要求',before:'<img src=x onerror=alert(1)>',after:'公开要求'}],inbox_version:2};
+const html=jobFacts(job);
+for(const text of ['远程办公 / 混合办公','现场办公','最低要求：硕士','优先：博士','CNY 30000–50000 / 月','字段变化 · v2'])if(!html.includes(text))throw Error('missing readable value '+text);
+if(html.includes('"level"')||html.includes('<img'))throw Error('raw JSON or unescaped posting content');
+if(!html.includes('&lt;img'))throw Error('original posting evidence lost');
+if(jobValue('read_state','unread')!=='未读'||jobValue('years',3)!=='3 年')throw Error('untranslated state or years');
+""")
+
     def test_digest_response_stays_with_original_intent_and_blank_hours_rejected(self):
         self.run_script('''
 const nodes={};const $=id=>nodes[id]||(nodes[id]={value:'',checked:false,textContent:''});
