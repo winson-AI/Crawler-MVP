@@ -7,12 +7,14 @@ from threading import Event
 from time import monotonic
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlsplit
 
 from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache, stamp_snapshot
 from .discovery import search_jobs, enrich_job
 from .personal import PersonalStore
-from .inbox import process_inbox, refresh_intent, read_inbox, application_fields
+from .inbox import process_inbox, refresh_intent, read_inbox, application_fields, preview_intent
+from .dashboard import source_health, home_summary, record_health
 from .rankers import DEFAULT_RANKER
 from .sources import get_source, list_sources, load_custom_sources, register_custom_source
 from .sources.custom import CONFIG_PATH, MAX_DOCUMENT, CustomSource, read_configs
@@ -53,6 +55,9 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
     def refresh(max_pages, source):
         adapter = get_source(source)
         original = dict(adapter.config) if isinstance(adapter, CustomSource) else None
+        started = datetime.now(timezone.utc).isoformat()
+        record_health(cache, source, "running", started)
+        health_status, health_error, count = "error", None, None
         try:
             def progress(value):
                 with lock:
@@ -66,7 +71,10 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                 with lock:
                     state["report_path"] = report["report_path"]
                 if result["status"] != "ok":
+                    health_status = result["status"]
                     raise RuntimeError(result["error"])
+                count = result.get("new_count")
+                health_status = "ok"
             else:
                 previous = load_cache(cache_path(source, cache), source)
                 snapshot = crawl(max_pages=max_pages, progress=progress, source=source)
@@ -74,15 +82,19 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                 if original is not None and adapter.config != original:
                     register_custom_source(adapter.config, custom_path)
                 save_cache(snapshot, cache_path(source, cache))
+                health_status = "ok"
                 update_inbox()
         except Exception as exc:
+            health_error = str(exc)
             if original is not None:
                 adapter.__dict__.update(CustomSource(original).__dict__)
             with lock:
                 state["error"] = str(exc)
         finally:
+            error = record_health(cache, source, health_status, started, health_error, count)
             with lock:
                 state["running"] = False
+                state["health_error"] = error
 
     def refresh_pdd():
         # Playwright's sync objects stay on their owner thread between requests.
@@ -93,6 +105,8 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                 if max_pages is None:
                     return
                 try:
+                    started = datetime.now(timezone.utc).isoformat()
+                    record_health(cache, "pinduoduo", "running", started)
                     remaining = max(0, next_refresh - monotonic())
                     if remaining:
                         with lock:
@@ -107,6 +121,7 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                         sessions.enter_context(adapter.session())
                     refresh(max_pages, "pinduoduo")
                 except Exception as exc:
+                    record_health(cache, "pinduoduo", "error", started, str(exc))
                     with lock:
                         state.update(running=False, error=str(exc))
                 finally:
@@ -139,6 +154,10 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                     return self.send(200, {"sources": list_sources()})
                 if url.path == "/api/intents":
                     return self.send(200, {"intents": personal.intents()})
+                if url.path == "/api/health":
+                    return self.send(200, source_health(cache, store=personal))
+                if url.path == "/api/home":
+                    return self.send(200, home_summary(personal, cache))
                 if url.path == "/api/notifications":
                     return self.send(200, {"notifications": personal.notifications()})
                 if url.path == "/api/notifications/export":
@@ -151,7 +170,10 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                     ident = query.get("intent_id", [""])[0]
                     intent = personal.intent(ident)
                     changes = refresh_intent(personal, intent, cache)
-                    result = read_inbox(personal, ident, query.get("state", ["unread"])[0])
+                    current = query.get("current", ["0"])[0]
+                    if current not in ("0", "1"):
+                        raise ValueError("current 必须为 0 或 1")
+                    result = read_inbox(personal, ident, query.get("state", ["unread"])[0], current_only=current == "1")
                     result["source_errors"] = changes["source_errors"]
                     if url.path.endswith("/export"):
                         fmt = query.get("format", ["json"])[0]
@@ -200,6 +222,13 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                         result.update(total=len(result["jobs"]), uncertain_count=0)
                     jobs = result["jobs"]
                     jobs = application_fields(personal, jobs)
+                    stage = query.get("application_status", ["all"])[0]
+                    if stage not in ("all", "none", "planned", "applied", "interview", "offer", "rejected", "withdrawn"):
+                        raise ValueError("投递状态筛选无效")
+                    if stage != "all":
+                        jobs = [j for j in jobs if j["application_status"] == stage]
+                        result.update(total=len(jobs), matched_count=sum(j["match_state"] == "matched" for j in jobs),
+                                      uncertain_count=sum(j["match_state"] == "uncertain" for j in jobs))
                     if tracking:
                         favorite_keys = {(f["source"], f["id"]) for f in personal.favorites()}
                         jobs = [{**j, "favorite": (j["source"], j["id"]) in favorite_keys} for j in jobs]
@@ -228,7 +257,8 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
             nonlocal pdd_thread
             if self.path not in ("/api/crawl", "/api/sources/preview", "/api/sources/custom", "/api/templates/match",
                                   "/api/intents", "/api/intents/delete", "/api/favorites", "/api/inbox/read",
-                                  "/api/inbox/refresh", "/api/applications", "/api/digest/settings", "/api/notifications/read"):
+                                  "/api/inbox/refresh", "/api/applications", "/api/digest/settings", "/api/notifications/read",
+                                  "/api/intents/preview", "/api/intents/undo"):
                 return self.send(404, {"error": "路径不存在"})
             # Only the local same-origin UI can start a crawl through the browser.
             origin = self.headers.get("Origin")
@@ -251,10 +281,16 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                 body = json.loads(self.rfile.read(size))
                 if not isinstance(body, dict):
                     raise ValueError("请求体必须为 JSON 对象")
+                if self.path == "/api/intents/preview":
+                    return self.send(200, preview_intent(personal, body, cache))
+                if self.path == "/api/intents/undo":
+                    intent = personal.undo_intent(body.get("id"), body.get("expected_revision"))
+                    refresh_intent(personal, intent, cache)
+                    return self.send(200, personal.intent(intent["id"]))
                 if self.path == "/api/intents":
                     intent = personal.save_intent(body)
                     refresh_intent(personal, intent, cache)
-                    return self.send(200, intent)
+                    return self.send(200, personal.intent(intent["id"]))
                 if self.path == "/api/inbox/refresh":
                     return self.send(200, process_inbox(cache=cache, store=personal, intent_id=body.get("intent_id")))
                 if self.path == "/api/inbox/read":
@@ -341,6 +377,7 @@ def make_server(host="127.0.0.1", port=8000, cache=DEFAULT_CACHE, custom_sources
                         stamp_snapshot(snapshot, load_cache(cache_path(registered.id, cache), registered.id),
                             ledger=Path(cache).parent / "observations.sqlite3")
                         save_cache(snapshot, cache_path(registered.id, cache))
+                        record_health(cache, registered.id, "ok", datetime.now(timezone.utc).isoformat())
                         update_inbox()
                         with lock:
                             state.update(running=False, progress=None)

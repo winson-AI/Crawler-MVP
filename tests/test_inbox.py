@@ -85,13 +85,13 @@ class InboxTests(unittest.TestCase):
         self.assertEqual(item["id"], "two")
         self.assertTrue(item["currently_matching"])
 
-    def test_criteria_edit_rebaselines_but_rename_and_rank_change_preserve_unread(self):
+    def test_criteria_edit_preserves_unread_and_baselines_newly_matching_jobs(self):
         self.new()
         changed = self.store.save_intent({**self.store.intent(self.intent["id"]), "name": "新名称", "ranker": "experience_desc"})
         self.assertEqual(read_inbox(self.store, changed["id"])["total"], 1)
         changed = self.store.save_intent({**changed, "selector": {"keywords": ["研发"]}})
         refresh_intent(self.store, changed, self.cache)
-        self.assertEqual(read_inbox(self.store, changed["id"])["total"], 0)
+        self.assertEqual(read_inbox(self.store, changed["id"])["total"], 1)
 
     def test_digest_frequency_quiet_time_and_repeat_are_idempotent(self):
         self.enable()

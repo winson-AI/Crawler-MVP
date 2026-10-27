@@ -2,6 +2,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from datetime import datetime, timezone
 
 from .crawler import DEFAULT_CACHE, cache_path, crawl, export_csv, load_cache, save_cache, stamp_snapshot
 from .rankers import DEFAULT_RANKER, RANKERS, rank_jobs
@@ -10,6 +11,7 @@ from .server import make_server
 from .sources import list_sources
 from .sync import DEFAULT_OUTPUT, DEFAULT_STATE, sync_jobs
 from .verification import ai_visual_review, record_visual_review
+from .dashboard import record_health
 
 
 def sync_progress(source, progress):
@@ -75,16 +77,23 @@ def main():
                 verification_wait=args.verification_wait, progress=sync_progress,
                 pdd_details=args.pdd_details)
             print(json.dumps(report, ensure_ascii=False, indent=2))
-            if report.get("failed_sources") or report.get("personal_updates", {}).get("errors"):
+            if report.get("failed_sources") or report.get("personal_updates", {}).get("errors") or report.get("health_errors"):
                 return 1
             if report.get("paused_sources"):
                 return 2
         elif args.command == "crawl":
-            previous = load_cache(cache_path(args.source, args.cache), args.source)
-            snapshot = crawl(args.max_pages, args.delay, lambda p: print(
-                f"第 {p['page']} 页 · {p['collected']}/{p['reported_total']}", file=sys.stderr), source=args.source)
-            save_cache(stamp_snapshot(snapshot, previous, ledger=Path(args.cache).parent / "observations.sqlite3"),
-                       cache_path(args.source, args.cache))
+            started = datetime.now(timezone.utc).isoformat()
+            record_health(args.cache, args.source, "running", started)
+            try:
+                previous = load_cache(cache_path(args.source, args.cache), args.source)
+                snapshot = crawl(args.max_pages, args.delay, lambda p: print(
+                    f"第 {p['page']} 页 · {p['collected']}/{p['reported_total']}", file=sys.stderr), source=args.source)
+                save_cache(stamp_snapshot(snapshot, previous, ledger=Path(args.cache).parent / "observations.sqlite3"),
+                           cache_path(args.source, args.cache))
+            except Exception as exc:
+                record_health(args.cache, args.source, "error", started, str(exc))
+                raise
+            record_health(args.cache, args.source, "ok", started)
             from .inbox import process_inbox
             snapshot["personal_updates"] = process_inbox(cache=args.cache)
             print(json.dumps({k: v for k, v in snapshot.items() if k != "jobs"}, ensure_ascii=False, indent=2))

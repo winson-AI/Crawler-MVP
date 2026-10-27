@@ -87,3 +87,48 @@ if(!$('results').innerHTML.includes('已读基线')||$('results').innerHTML.incl
 $('intent-list').value='';render();if(!$('results').innerHTML.includes('请先选择或保存'))throw Error('unsaved intent empty state');
 $('workspace-view').value='applications';render();if(!$('results').innerHTML.includes('投递跟进记录'))throw Error('tracking empty state');
 ''')
+
+    def test_edit_cancel_is_read_only_and_confirm_uses_preview_revision(self):
+        self.run_script('''
+const nodes={};const $=id=>nodes[id]||(nodes[id]={value:'',checked:false,disabled:false,textContent:''});
+const selectedSources=()=>['baidu'],selector=()=>({keywords:['Python']});
+let bodies=[],messages=[];
+const loadIntents=async()=>{},search=async()=>{},error=message=>messages.push(message);
+async function request(path,options){bodies.push([path,JSON.parse(options.body)]);return path.endsWith('/preview')?{expected_revision:7}:{id:'saved'};}
+''' + self.section("async function saveIntent(", "$('save-intent').onclick=") + '''
+(async()=>{
+ $('intent-list').value='saved';$('intent-name').value='Python';
+ confirmIntent=async()=>null;await saveIntent();
+ if(bodies.length!==1||bodies[0][0]!=='/api/intents/preview')throw Error('cancel mutated intention');
+ bodies=[];confirmIntent=async()=> 'preserve';await saveIntent();
+ const saved=bodies[1][1];if(saved.expected_revision!==7||saved.edit_mode!=='preserve'||saved.restart_confirmed)throw Error('unsafe edit confirmation');
+ if(messages.length)throw Error(messages.join(';'));
+})().catch(error=>{console.error(error);process.exit(1)});
+''')
+
+    def test_home_uses_existing_and_unread_entry_points_and_ignores_stale_response(self):
+        self.run_script('''
+const nodes={};const $=id=>nodes[id]||(nodes[id]={textContent:'',innerHTML:''});
+const esc=String,applicationLabels={planned:'准备投递',applied:'已投递',interview:'面试中'};
+let homeVersion=0,resolve,slow=true;
+function response(name){return {intents:[{id:'profile',name,unread:2,updated:1,matching:10,uncertain:3,source_errors:[]}],followup:{planned:1,applied:2,interview:0},favorites:1,unread_notifications:0};}
+async function request(){if(slow)return await new Promise(r=>resolve=r);return response('latest');}
+''' + self.section("async function loadHome()", "$('home-content').onclick=") + '''
+(async()=>{
+ const old=loadHome();slow=false;await loadHome();resolve(response('old'));await old;
+ const html=$('home-content').innerHTML;
+ if(!html.includes('latest')||html.includes('old')||!html.includes('data-state="all"')||!html.includes('data-state="unread"')||!html.includes('data-stage="planned"'))throw Error('home summary or race guard');
+})().catch(error=>{console.error(error);process.exit(1)});
+''')
+
+    def test_health_banner_distinguishes_failed_refresh_from_success_with_zero_new(self):
+        self.run_script('''
+const nodes={};const $=id=>nodes[id]||(nodes[id]={textContent:'',innerHTML:''});const esc=String;
+let succeeded=false;
+async function request(){return {latest_run:{outcome:succeeded?'refreshed':'no_fresh_data',successful:succeeded?1:0,total:1,failed:succeeded?0:1,new_count:succeeded?0:null},warnings:[],sources:[{source:'baidu',name:'百度',status:succeeded?'ok':'error',mode:'http',schedulable:true,collected:99,complete:true,scope:'listing',new_count:succeeded?0:null,error:succeeded?null:'network failure',action:'刷新来源'}]};}
+''' + self.section("async function loadHealth()", "$('health-items').onclick=") + '''
+(async()=>{
+ await loadHealth();if(!$('health-banner').textContent.includes('不能判断没有新岗位')||$('health-items').innerHTML.includes('本次新增 0'))throw Error('failure presented as zero new');
+ succeeded=true;await loadHealth();if(!$('health-banner').textContent.includes('新增 0 条')||!$('health-items').innerHTML.includes('本次新增 0 条'))throw Error('genuine zero new was hidden');
+})().catch(error=>{console.error(error);process.exit(1)});
+''')

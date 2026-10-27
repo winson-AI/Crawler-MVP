@@ -1,4 +1,4 @@
-"""P1 acceptance: replay two real snapshots, then optionally sync live Baidu in isolation."""
+"""Product acceptance: real snapshots, intention editing, source health, and optional live Baidu."""
 import argparse
 import csv
 import hashlib
@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from jobcrawler.crawler import cache_path, load_cache, save_cache
@@ -25,7 +26,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--before", type=Path, required=True, help="真实历史运行的 checkpoints 目录")
     parser.add_argument("--live-baidu", action="store_true", help="隔离执行百度全量列表增量同步")
-    parser.add_argument("--output", type=Path, default=Path("output") / ("p1-live-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")))
+    parser.add_argument("--health-report", type=Path, help="回放已有真实同步报告，仅将缓存路径映射到验收目录")
+    parser.add_argument("--output", type=Path, default=Path("output") / ("product-live-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")))
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     cache = args.output / "data/jobs.json"
@@ -127,15 +129,72 @@ def main():
         (args.output / "applications.csv").write_bytes(request("/api/export", {"sources": "all", "applications": 1, "format": "csv"}, raw=True))
         report.update(restart_persistence="passed", independent_read_state="passed", digest_files=[n["file"] for n in notifications],
                       notification_ack_separate="passed", repeated_digest_idempotent="passed")
+        # These checks use actual existing jobs, never manufactured postings.
+        home = request("/api/home")
+        assert home["followup"]["planned"] == 1
+        for item in home["intents"]:
+            current = request("/api/inbox/export", {"intent_id": item["id"], "state": "all", "current": 1})
+            assert item["matching"] == current["total"]
+            assert item["unread"] == sum(j["read_state"] == "unread" for j in current["jobs"])
+        original = next(i for i in request("/api/intents")["intents"] if i["id"] == intents[1]["id"])
+        q = {"intent_id": original["id"], "state": "all"}
+        before_edit = request("/api/inbox/export", q)
+        before_current = request("/api/inbox/export", {**q, "current": 1})
+        identity = lambda j: (j["source"], j["id"])
+        old_states = {identity(j): (j["inbox_version"], j["read_state"]) for j in before_edit["jobs"]}
+        change = {**original, "selector": {}}
+        preview = request("/api/intents/preview", body=change)
+        assert request("/api/inbox/export", q)["jobs"] == before_edit["jobs"]
+        saved = request("/api/intents", body={**change, "expected_revision": preview["expected_revision"]})
+        expanded = request("/api/inbox/export", q)
+        assert all((j["inbox_version"], j["read_state"]) == old_states[identity(j)]
+                   for j in expanded["jobs"] if identity(j) in old_states)
+        added = [j for j in expanded["jobs"] if identity(j) not in old_states]
+        assert added and all(j["read_state"] == "read" and j["change_kind"] == "baseline" for j in added)
+        try:
+            request("/api/intents", body={**change, "expected_revision": preview["expected_revision"]})
+            raise AssertionError("stale revision was accepted")
+        except HTTPError as error:
+            assert error.code == 400
+        request("/api/intents/undo", body={"id": saved["id"], "expected_revision": saved["revision"]})
+        restored_current = request("/api/inbox/export", {**q, "current": 1})
+        assert {identity(j) for j in restored_current["jobs"]} == {identity(j) for j in before_current["jobs"]}
+        followup_query = {"sources": "all", "applications": 1, "application_status": "planned"}
+        assert request("/api/jobs", followup_query)["jobs"] == request("/api/export", followup_query)["jobs"]
+        report["product_workflow"] = {"home_matching_counts": "passed", "edit_preview": preview,
+            "existing_read_versions_preserved": len(old_states), "new_existing_jobs_baselined": len(added),
+            "undo_restored_matching_scope": "passed", "stale_revision_rejected": True,
+            "followup_export_consistent": "passed"}
+        if args.health_report:
+            evidence = json.loads(args.health_report.read_text())
+            replay = {**evidence, "config": {**evidence["config"], "cache": str(cache.resolve())},
+                      "acceptance_replay_source": str(args.health_report.resolve())}
+            save_cache(replay, args.output / "output/incremental/health-replay/report.json")
+            health = request("/api/health")
+            successful = sum(r["status"] == "ok" for r in evidence["sources"].values())
+            assert health["latest_run"]["successful"] == successful
+            if not successful:
+                assert health["latest_run"]["outcome"] == "no_fresh_data" and health["latest_run"]["new_count"] is None
+            assert any(not s["schedulable"] and s["mode"] == "document" for s in health["sources"])
+            assert any(not s["schedulable"] and s["mode"] == "browser" for s in health["sources"])
+            report["health_replay"] = {"original": str(args.health_report.resolve()),
+                "sha256": hashlib.sha256(args.health_report.read_bytes()).hexdigest(), "summary": health["latest_run"],
+                "manual_source_modes_distinguished": True}
+            save_cache(health, args.output / "health-replay.json")
         if args.live_baidu:
-            live = sync_jobs(sources=["baidu"], cache=cache, state_path=cache.parent / "sync-state.json", output=args.output / "incremental")
+            live = sync_jobs(sources=["baidu"], cache=cache, state_path=cache.parent / "sync-state.json", output=args.output / "output/incremental")
             report["live_baidu"] = {"report": live["report_path"], "result": live["sources"]["baidu"], "personal_updates": live["personal_updates"]}
-            assert live["sources"]["baidu"]["status"] == "ok", live["sources"]["baidu"]
             assert not live["personal_updates"]["errors"]
+            health = next(s for s in request("/api/health")["sources"] if s["source"] == "baidu")
+            assert health["status"] == live["sources"]["baidu"]["status"]
+            report["live_baidu"]["health_status"] = health["status"]
         assert all(hashlib.sha256(p.read_bytes()).hexdigest() == h for p, h in originals.items())
-        report.update(status="passed", production_caches_and_history_unchanged=True)
+        live_failed = args.live_baidu and live["sources"]["baidu"]["status"] != "ok"
+        report.update(status="passed_with_live_source_failure" if live_failed else "passed", production_caches_and_history_unchanged=True)
         save_cache(report, args.output / "validation.json")
         print(json.dumps({"status": report["status"], "intents": report["historical_changes"], "report": str((args.output / "validation.json").resolve())}, ensure_ascii=False))
+        if live_failed:
+            raise SystemExit(1)
     finally:
         stop()
 

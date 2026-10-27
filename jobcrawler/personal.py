@@ -13,6 +13,7 @@ from .sources import get_source
 APPLICATION_STATES = ("none", "planned", "applied", "interview", "offer", "rejected", "withdrawn")
 DIGEST_DEFAULTS = {"enabled": False, "frequency": "daily", "include_updates": True,
                    "include_uncertain": False, "quiet_start": 22, "quiet_end": 8}
+INTENT_SCOPE = ("sources", "selector", "include_uncertain")
 
 
 def validate_digest(value):
@@ -41,6 +42,7 @@ class PersonalStore:
             db.execute("CREATE TABLE IF NOT EXISTS inbox_sources (intent TEXT, source TEXT, observed REAL NOT NULL, PRIMARY KEY(intent,source))")
             db.execute("CREATE TABLE IF NOT EXISTS applications (source TEXT, id TEXT, payload TEXT NOT NULL, PRIMARY KEY(source,id))")
             db.execute("CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, intent TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL, read INTEGER NOT NULL DEFAULT 0)")
+            db.execute("CREATE TABLE IF NOT EXISTS source_health (source TEXT PRIMARY KEY, payload TEXT NOT NULL)")
 
     @contextmanager
     def connect(self):
@@ -55,7 +57,7 @@ class PersonalStore:
         with self.connect() as db:
             return [json.loads(row[0]) for row in db.execute("SELECT payload FROM intents ORDER BY rowid")]
 
-    def save_intent(self, body):
+    def prepare_intent(self, body):
         name = body.get("name")
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:
             raise ValueError("意向名称应为 1–80 字符")
@@ -76,21 +78,67 @@ class PersonalStore:
         payload = {"id": ident, "name": name.strip(), "sources": list(dict.fromkeys(sources)),
                    "selector": selector, "ranker": ranker, "include_uncertain": uncertain,
                    "updated_at": datetime.now(timezone.utc).isoformat()}
+        return payload
+
+    def save_intent(self, body):
+        payload = self.prepare_intent(body)
+        ident = payload["id"]
+        mode = body.get("edit_mode", "preserve")
+        if mode not in ("preserve", "restart"):
+            raise ValueError("edit_mode 必须为 preserve 或 restart")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT payload FROM intents WHERE id=?", (ident,)).fetchone()
             exists = row is not None
             old = json.loads(row[0]) if row else {}
+            revision = old.get("revision", 0)
+            expected = body.get("expected_revision")
+            if expected is not None and (type(expected) is not int or expected != revision):
+                raise ValueError("意向已被修改，请重新载入并预览")
+            if mode == "restart" and (not exists or expected is None or body.get("restart_confirmed") is not True):
+                raise ValueError("重新建立基线需要当前版本和明确确认")
             payload["digest"] = validate_digest(body.get("digest", old.get("digest", {})))
             if body.get("id") and not exists:
                 raise ValueError("意向已不存在，请另存为新意向")
             if not exists and db.execute("SELECT count(*) FROM intents").fetchone()[0] >= 50:
                 raise ValueError("最多保存 50 个求职意向")
-            if old and any(old.get(k) != payload[k] for k in ("sources", "selector", "include_uncertain")):
+            payload["revision"] = revision + 1
+            changed = bool(old) and any(old.get(k) != payload[k] for k in INTENT_SCOPE)
+            payload["baseline_sources"] = old.get("baseline_sources", [])
+            if old.get("previous_settings"):
+                payload["previous_settings"] = old["previous_settings"]
+            if changed:
+                payload["previous_settings"] = {k: old[k] for k in INTENT_SCOPE}
+                payload["baseline_sources"] = payload["sources"][:]
+                db.execute("UPDATE inbox SET current=0 WHERE intent=?", (ident,))
+            if mode == "restart":
                 db.execute("DELETE FROM inbox WHERE intent=?", (ident,))
                 db.execute("DELETE FROM inbox_sources WHERE intent=?", (ident,))
+                payload.pop("previous_settings", None)
+                payload["baseline_sources"] = payload["sources"][:]
             db.execute("INSERT OR REPLACE INTO intents VALUES (?,?)", (ident, json.dumps(payload, ensure_ascii=False)))
         return payload
+
+    def undo_intent(self, ident, expected_revision):
+        if not isinstance(ident, str):
+            raise ValueError("意向 ID 无效")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT payload FROM intents WHERE id=?", (ident,)).fetchone()
+            if not row:
+                raise ValueError("求职意向不存在")
+            intent = json.loads(row[0])
+            if type(expected_revision) is not int or expected_revision != intent.get("revision", 0):
+                raise ValueError("意向已被修改，请重新载入")
+            previous = intent.pop("previous_settings", None)
+            if not previous:
+                raise ValueError("没有可撤销的条件修改")
+            intent.update(previous, revision=expected_revision + 1,
+                          updated_at=datetime.now(timezone.utc).isoformat())
+            intent["baseline_sources"] = intent["sources"][:]
+            db.execute("UPDATE inbox SET current=0 WHERE intent=?", (ident,))
+            db.execute("UPDATE intents SET payload=? WHERE id=?", (json.dumps(intent, ensure_ascii=False), ident))
+        return intent
 
     def delete_intent(self, ident):
         if not isinstance(ident, str):

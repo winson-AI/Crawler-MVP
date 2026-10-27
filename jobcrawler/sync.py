@@ -11,6 +11,7 @@ from .selectors import select_jobs, validate_selector
 from .sources import get_source, list_sources
 from .incremental import collect_incremental
 from .verification import VerificationRequired
+from .dashboard import record_health, run_summary
 
 DEFAULT_STATE = DEFAULT_CACHE.parent / "sync-state.json"
 DEFAULT_OUTPUT = DEFAULT_CACHE.parent.parent / "output" / "incremental"
@@ -96,6 +97,10 @@ def sync_jobs(sources=None, state_path=DEFAULT_STATE, cache=DEFAULT_CACHE,
             filling_pending = source == "pinduoduo" and pdd_details == "full" and prior.get("pending_detail_count", 0)
             if prior.get("status") == "ok" and not filling_pending:
                 continue
+            source_started = datetime.now(timezone.utc).isoformat()
+            health_error = record_health(cache, source, "running", source_started)
+            if health_error:
+                report.setdefault("health_errors", []).append({"source": source, "error": health_error})
             old = state["sources"][source]
             seen = set(old["seen_ids"])
             checkpoint = run_path / "checkpoints" / source
@@ -173,12 +178,19 @@ def sync_jobs(sources=None, state_path=DEFAULT_STATE, cache=DEFAULT_CACHE,
             except Exception as exc:
                 report["sources"][source] = {"status": "error", "error": str(exc),
                     "checkpoint": str(checkpoint), "acquisition": getattr(exc, "acquisition", {})}
+            result = report["sources"][source]
+            result["attempt_started_at"] = source_started
+            health_error = record_health(cache, source, result["status"], source_started,
+                error=result.get("error"), new_count=result.get("new_count"))
+            if health_error:
+                report.setdefault("health_errors", []).append({"source": source, "error": health_error})
             save_cache(report, run_path / "report.json")
         report.update(finished_at=datetime.now(timezone.utc).isoformat(),
                       new_count=sum(r.get("new_count", 0) for r in report["sources"].values()),
                       updated_count=sum(r.get("updated_count", 0) for r in report["sources"].values()),
                       paused_sources=[s for s, r in report["sources"].items() if r["status"] == "paused"],
                       failed_sources=[s for s, r in report["sources"].items() if r["status"] == "error"])
+        report["health_summary"] = run_summary(report)
         from .inbox import process_inbox
         try:
             report["personal_updates"] = process_inbox(cache=cache,

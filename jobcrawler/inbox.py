@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from .crawler import DEFAULT_CACHE, save_cache
 from .discovery import search_jobs, enrich_job
 from .incremental import content_hash
-from .personal import PersonalStore, validate_digest
+from .personal import PersonalStore, validate_digest, INTENT_SCOPE
 from .rankers import rank_jobs, publication_time
 
 CONTENT_FIELDS = ("id", "source", "title", "company", "url", "locations", "requirements", "description",
@@ -24,8 +24,10 @@ def refresh_intent(store, intent, cache):
     with store.connect() as db:
         db.execute("BEGIN IMMEDIATE")
         row = db.execute("SELECT payload FROM intents WHERE id=?", (intent["id"],)).fetchone()
-        if not row or any(json.loads(row[0]).get(k) != intent.get(k) for k in ("sources", "selector", "include_uncertain")):
+        current = json.loads(row[0]) if row else {}
+        if not row or any(current.get(k) != intent.get(k) for k in (*INTENT_SCOPE, "revision")):
             return {**changes, "superseded": True}
+        pending = set(current.get("baseline_sources", []))
         for snapshot in result["snapshots"]:
             source = snapshot["source_id"]
             observed = publication_time(snapshot.get("fetched_at"))
@@ -34,7 +36,7 @@ def refresh_intent(store, intent, cache):
             prior = db.execute("SELECT observed FROM inbox_sources WHERE intent=? AND source=?", (intent["id"], source)).fetchone()
             if prior and observed < prior[0]:
                 continue
-            baseline = prior is None
+            baseline = prior is None or source in pending
             db.execute("UPDATE inbox SET current=0 WHERE intent=? AND source=?", (intent["id"], source))
             for job in (j for j in jobs if j["source"] == source):
                 key = (intent["id"], source, job["id"])
@@ -53,7 +55,27 @@ def refresh_intent(store, intent, cache):
                 else:
                     db.execute("UPDATE inbox SET payload=?, current=1 WHERE intent=? AND source=? AND id=?", (payload, *key))
             db.execute("INSERT OR REPLACE INTO inbox_sources VALUES (?,?,?)", (intent["id"], source, observed))
+            pending.discard(source)
+        if pending != set(current.get("baseline_sources", [])):
+            current["baseline_sources"] = sorted(pending)
+            db.execute("UPDATE intents SET payload=? WHERE id=?", (json.dumps(current, ensure_ascii=False), intent["id"]))
     return changes
+
+
+def preview_intent(store, body, cache):
+    proposed = store.prepare_intent(body)
+    old = store.intent(proposed["id"]) if body.get("id") else None
+    result = search_jobs(proposed["sources"], proposed["selector"], proposed["ranker"], cache, include_uncertain=True)
+    matches = result["jobs"] if proposed["include_uncertain"] else [j for j in result["jobs"] if j["match_state"] == "matched"]
+    keys = {(j["source"], j["id"]) for j in matches}
+    with store.connect() as db:
+        rows = db.execute("SELECT source,id,version,read_version,current FROM inbox WHERE intent=?", (proposed["id"],)).fetchall()
+    return {"scope_changed": bool(old) and any(old[k] != proposed[k] for k in INTENT_SCOPE),
+            "expected_revision": old.get("revision", 0) if old else 0,
+            "matching": len(keys), "uncertain": sum(j["match_state"] == "uncertain" for j in matches),
+            "newly_matching": len(keys - {(r[0], r[1]) for r in rows if r[4]}),
+            "leaving": sum(bool(r[4]) and (r[0], r[1]) not in keys for r in rows),
+            "unread_preserved": sum(r[2] > r[3] for r in rows), "source_errors": result["source_errors"]}
 
 
 def application_fields(store, jobs):
@@ -62,7 +84,7 @@ def application_fields(store, jobs):
              "application_notes": records.get((job["source"], job["id"]), {}).get("notes", "")} for job in jobs]
 
 
-def read_inbox(store, ident, state="unread"):
+def read_inbox(store, ident, state="unread", current_only=False):
     intent = store.intent(ident)
     if state not in ("all", "unread", "read", "updated"):
         raise ValueError("收件箱状态必须为 all/unread/read/updated")
@@ -71,6 +93,8 @@ def read_inbox(store, ident, state="unread"):
     favorites = {(r["source"], r["id"]): r for r in store.favorites()}
     jobs = []
     for payload, version, read_version, kind, changed_at, current in rows:
+        if current_only and not current:
+            continue
         job = json.loads(payload)
         job = enrich_job(job, {}, favorites.get((job["source"], job["id"])), archived=not current)
         job.update(inbox_version=version, read_state="read" if read_version >= version else "unread",
